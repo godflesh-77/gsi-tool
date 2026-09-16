@@ -45,7 +45,32 @@
   `set /p` внутри трёх уровней if → плоская структура;
   `Write-Error` в helper → `Write-Output` для `for /f` совместимости.
   Все эти пункты в PowerShell-версии решаются автоматически.
-  
+- **PowerShell-порт Windows-версии** (замена `.cmd` + helper.ps1 на монолитный `gsi-tool.ps1`).
+  - Упраздняет cmd-hell: BOM, CP1251, `errorlevel` в pipe, `exit /b` в скобках, `set /a` overflow.
+  - Launcher `.cmd` в 5 строк, только ASCII, `powershell -ExecutionPolicy Bypass -File`.
+  - `[Console]::OutputEncoding` + `$OutputEncoding = UTF8` для корректного вывода.
+  - Функции вместо меток: `Get-ImageSize`, `Test-SparseIntegrity`, `Invoke-FbFlash`,
+    `Get-CurrentSlot`, `Invoke-VerifySha256`, `New-SuperPartition`, `Start-DataBackup`,
+    `Install-GkiKernels`, `Restore-EmergencySlots`, `Show-MainMenu`, `Show-ActionMenu`,
+    `Show-ServiceMenu`, `Select-SystemImage`, `Resolve-SystemImage`, `Confirm-Vbmeta`.
+  - Прогресс-бар бэкапа через `Write-Progress` + `CopyToAsync`.
+  - Автоматическое устранение spawn'ов helper'а (минус 200–500 мс на каждый вызов).
+- **Мультиязычность EN/RU.**
+  - Auto-detect: `$LANG`/`CurrentUICulture` в PS, `$LANG` в bash.
+  - Override: `-Lang ru` (PS), `--lang=ru` (bash).
+  - Тексты встроены (хеш-таблица `$MSG` в PS, `MSG_RU`/`MSG_EN` в bash).
+  - Комментарии в коде — на английском.
+- **Проверка версий внешних утилит** (до главного меню):
+  - `adb` / `fastboot` ≥ 33.0.0 — warning.
+  - `7z.exe` ≥ 22.00 — **hard fail** (нестабильный `.zst` и `-bsp1` на старых версиях).
+  - `unxz` / `gunzip` / `zstd` (Linux) — warning.
+  - Формат: таблица `[Tool Check]` с версиями и статусом `✓` / `⚠` / `✗`.
+  - Флаг `--strict-versions` для жёсткого отказа на любом warning.
+- **Только x86_64 / aarch64.**
+  - Windows: `[Environment]::Is64BitOperatingSystem` + `Is64BitProcess` check.
+  - Linux: `uname -m` ∈ {`x86_64`, `aarch64`}.
+  - 32-bit Windows и i386/ARMv7 Linux — не поддерживаются.
+
 ### Planned for 1.0.0
 - **Опциональная SHA256-верификация образов.** Отдельный режим
   `verify_sha256` в helper (regex `(?i)[a-f0-9]{64}`), локальная
