@@ -1,0 +1,11 @@
+7z.dll
+7z.exe
+logs/
+backups/
+*.log
+*.bak
+*.tmp
+system.img
+vbmeta.img
+*.img.zst
+*.img.xz
