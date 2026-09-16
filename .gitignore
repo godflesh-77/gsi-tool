@@ -9,3 +9,5 @@ system.img
 vbmeta.img
 *.img.zst
 *.img.xz
+TODO.md
+ROADMAP.md
