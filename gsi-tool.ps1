@@ -1,5 +1,5 @@
 # ==============================================================================
-# GSI FLASH & SERVICE TOOL 1.0.1 (PowerShell edition)
+# GSI FLASH & SERVICE TOOL 1.0.2 (PowerShell edition)
 # Flash GSI, manage A/B slots, back up /data, service partitions.
 #
 # Repository: https://github.com/godflesh-77/gsi-tool
@@ -19,7 +19,7 @@ $null = [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 $ErrorActionPreference = 'Continue'
 
-$Script:TOOL_VERSION = '1.0.1'
+$Script:TOOL_VERSION = '1.0.2'
 
 $buildHash = $null
 if (Get-Command git -ErrorAction SilentlyContinue) {
@@ -452,7 +452,6 @@ function Test-ToolVersions {
     Log "Tool version check (strict=$($Script:STRICT_VERSIONS))"
     $problems = 0
 
-    # --- adb ---
     if (-not $Script:ADB_PATH) {
         Say "  adb      : $((T 'ToolMissing'))" 'Red'
         LogErr "adb not found"
@@ -474,7 +473,6 @@ function Test-ToolVersions {
         }
     }
 
-    # --- fastboot ---
     if (-not $Script:FASTBOOT_PATH) {
         Say "  fastboot : $((T 'ToolMissing'))" 'Red'
         LogErr "fastboot not found"
@@ -496,7 +494,6 @@ function Test-ToolVersions {
         }
     }
 
-    # --- 7-Zip ---
     if ($Script:SEVENZIP) {
         $v = Get-7ZipVersion $Script:SEVENZIP
         $Script:SEVENZIP_VER = $v
@@ -556,6 +553,7 @@ function Invoke-Fb {
 
     if (-not $proc.WaitForExit($TimeoutSec * 1000)) {
         try { $proc.Kill() } catch { }
+        try { $proc.Dispose() } catch { }
         LogErr "fastboot TIMEOUT after ${TimeoutSec}s"
         return $false
     }
@@ -566,6 +564,7 @@ function Invoke-Fb {
     $out = try { $outTask.Result } catch { '' }
     $err = try { $errTask.Result } catch { '' }
     $exitCode = $proc.ExitCode
+    try { $proc.Dispose() } catch { }
 
     if ($out) { LogRaw "  fb stdout: $($out.Trim())" }
     if ($err) { LogRaw "  fb stderr: $($err.Trim())" }
@@ -605,6 +604,7 @@ function Invoke-Adb {
 
     if (-not $proc.WaitForExit($TimeoutSec * 1000)) {
         try { $proc.Kill() } catch { }
+        try { $proc.Dispose() } catch { }
         LogErr "adb TIMEOUT after ${TimeoutSec}s"
         return $false
     }
@@ -615,6 +615,7 @@ function Invoke-Adb {
     $out = try { $outTask.Result } catch { '' }
     $err = try { $errTask.Result } catch { '' }
     $exitCode = $proc.ExitCode
+    try { $proc.Dispose() } catch { }
 
     if ($out) { LogRaw "  adb stdout: $($out.Trim())" }
     if ($err) { LogRaw "  adb stderr: $($err.Trim())" }
@@ -1174,11 +1175,28 @@ function Backup-DataStream {
 
         $adbRc = $adbProc.ExitCode
         $szRc  = $szProc.ExitCode
+        try { $adbProc.Dispose() } catch { }
+        try { $szProc.Dispose()  } catch { }
+
         Log "adb exit=$adbRc  7z exit=$szRc"
-        if ($adbRc -ne 0) { LogWarn "adb exec-out tar exit code: $adbRc" }
-        if ($szRc -ne 0) {
-            LogErr "7z exit code: $szRc"
+
+        # Both must succeed. If adb died mid-stream, 7z happily returns 0 with
+        # a truncated archive — reject that case explicitly.
+        if ($adbRc -ne 0 -or $szRc -ne 0) {
+            LogErr "Backup pipeline failed: adb=$adbRc  7z=$szRc"
             Say ((T 'BackupFailed') -f $Script:LOG) 'Red'
+            if (Test-Path -LiteralPath $outFile) {
+                try { Remove-Item -LiteralPath $outFile -Force -ErrorAction SilentlyContinue } catch { }
+                LogWarn "Removed incomplete archive: $outFile"
+            }
+            Pause; return
+        }
+
+        # 0-byte archive protection (defensive)
+        if ((Test-Path -LiteralPath $outFile) -and ((Get-Item -LiteralPath $outFile).Length -eq 0)) {
+            LogErr "Backup produced 0-byte archive"
+            Say ((T 'BackupFailed') -f $Script:LOG) 'Red'
+            try { Remove-Item -LiteralPath $outFile -Force -ErrorAction SilentlyContinue } catch { }
             Pause; return
         }
 
@@ -1196,6 +1214,14 @@ function Backup-DataStream {
         if ($started) {
             try { if (-not $adbProc.HasExited) { $adbProc.Kill() } } catch { }
             try { if (-not $szProc.HasExited)  { $szProc.Kill()  } } catch { }
+        }
+        # Release handles even if Kill failed or was never needed
+        try { $adbProc.Dispose() } catch { }
+        try { $szProc.Dispose()  } catch { }
+        # Remove incomplete archive
+        if ($outFile -and (Test-Path -LiteralPath $outFile)) {
+            try { Remove-Item -LiteralPath $outFile -Force -ErrorAction SilentlyContinue } catch { }
+            LogWarn "Removed incomplete archive: $outFile"
         }
         Pause
     }

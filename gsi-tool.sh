@@ -1,13 +1,13 @@
 #!/bin/bash
 # ==============================================================================
-# GSI FLASH & SERVICE TOOL 1.0.1 (Linux)
+# GSI FLASH & SERVICE TOOL 1.0.2 (Linux)
 # Flash GSI, manage A/B slots, back up /data, service partitions.
 #
 # Repository: https://github.com/godflesh-77/gsi-tool
 # License:    MIT
 # ==============================================================================
 
-TOOL_VERSION="1.0.1"
+TOOL_VERSION="1.0.2"
 
 if command -v git >/dev/null 2>&1 && [ -d .git ]; then
     BUILD=$(git rev-parse --short HEAD 2>/dev/null || date +%Y%m%d.%H%M)
@@ -71,7 +71,6 @@ esac
 # ==============================================================================
 declare -A MSG_EN MSG_RU
 
-# --- EN ---
 MSG_EN[MainMenuTitle]="GSI Flash Tool"
 MSG_EN[LogFile]="Log"
 MSG_EN[MenuCheckDev]="Check devices (ADB / Fastboot)"
@@ -187,7 +186,6 @@ MSG_EN[BackupNo7Zip]="Backup requires 7-Zip. Install 7-Zip 22.00+ and retry."
 
 MSG_EN[ExitCodeMsg]="Exit code: %s"
 
-# --- RU ---
 MSG_RU[MainMenuTitle]="GSI Flash Tool"
 MSG_RU[LogFile]="Лог"
 MSG_RU[MenuCheckDev]="Проверить устройства (ADB / Fastboot)"
@@ -322,7 +320,6 @@ tf() {
     local key="$1"; shift
     local fmt
     fmt="$(t "$key")"
-    # shellcheck disable=SC2059
     printf "$fmt" "$@"
 }
 
@@ -373,7 +370,6 @@ version_ge() {
 
 # ==============================================================================
 # Decompression with pv progress
-#   $1 source file, $2 output file, $3.. decompressor command (reads $1, writes stdout)
 # ==============================================================================
 decompress_with_progress() {
     local src="$1" out="$2"; shift 2
@@ -403,7 +399,6 @@ check_tool_versions() {
     log "Tool version check (strict=$STRICT_VERSIONS)"
     local problems=0
 
-    # --- adb ---
     if ! command -v adb >/dev/null 2>&1; then
         echo "  adb      : $(t ToolMissing)" >&2
         log_err "adb not found"
@@ -425,7 +420,6 @@ check_tool_versions() {
         fi
     fi
 
-    # --- fastboot ---
     if ! command -v fastboot >/dev/null 2>&1; then
         echo "  fastboot : $(t ToolMissing)" >&2
         log_err "fastboot not found"
@@ -447,7 +441,6 @@ check_tool_versions() {
         fi
     fi
 
-    # --- 7-Zip (optional on Linux) ---
     if command -v 7z >/dev/null 2>&1; then
         local sz_v
         sz_v=$(7z 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+' | head -1)
@@ -468,7 +461,6 @@ check_tool_versions() {
         log "7-Zip not found (not required on Linux)"
     fi
 
-    # --- zstd ---
     if command -v zstd >/dev/null 2>&1; then
         local z_v
         z_v=$(zstd --version 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 | tr -d 'v')
@@ -486,7 +478,6 @@ check_tool_versions() {
         fi
     fi
 
-    # --- required POSIX helpers ---
     if ! command -v timeout >/dev/null 2>&1; then
         echo "  timeout  : $(t ToolMissing)" >&2
         log_err "timeout not found"
@@ -1055,6 +1046,7 @@ free_super_space() {
 
 # ==============================================================================
 # Backup /data via ADB stream
+# 1.0.2: check entire PIPESTATUS, drop broken archive on any failure.
 # ==============================================================================
 backup_data_stream() {
     clear
@@ -1106,43 +1098,69 @@ backup_data_stream() {
     sarr+=("exec-out" "$remote_tar")
 
     log "Backup stream start (timeout ${BACKUP_TIMEOUT}s): $remote_tar"
-    local rc=0
+
     if command -v pv >/dev/null 2>&1 && command -v lz4 >/dev/null 2>&1; then
+        # ===== fast path: pv + lz4 =====
         set -o pipefail
         timeout "$BACKUP_TIMEOUT" adb "${sarr[@]}" 2>>"$LOG" | pv -N "$(t BackupProgress)" | lz4 -9 > "${bfile}.tar.lz4"
-        rc=${PIPESTATUS[0]}
+        # Capture PIPESTATUS IMMEDIATELY — must be a bare assignment, not `local`.
+        rc_array=("${PIPESTATUS[@]}")
         set +o pipefail
-        if [ "$rc" -eq 124 ]; then
-            log_err "backup TIMEOUT after ${BACKUP_TIMEOUT}s"
+        local adb_rc=${rc_array[0]}
+        local pv_rc=${rc_array[1]}
+        local lz4_rc=${rc_array[2]}
+
+        if [ "$adb_rc" -eq 124 ]; then
+            log_err "backup TIMEOUT after ${BACKUP_TIMEOUT}s (adb killed by timeout)"
+            rm -f "${bfile}.tar.lz4"
             echo "$(t BackupFailed) $LOG" >&2
             pause; return 1
         fi
-        if [ "$rc" -ne 0 ]; then
-            log_err "backup failed (adb rc=$rc)"
+        if [ "$adb_rc" -ne 0 ] || [ "$lz4_rc" -ne 0 ]; then
+            log_err "backup failed (adb=$adb_rc pv=$pv_rc lz4=$lz4_rc)"
+            rm -f "${bfile}.tar.lz4"
             echo "$(t BackupFailed) $LOG" >&2
             pause; return 1
         fi
         local sz
         sz=$(stat -c%s "${bfile}.tar.lz4" 2>/dev/null || echo 0)
-        log "Backup OK: ${bfile}.tar.lz4 ($sz bytes)"
-        tf BackupDone "${bfile}.tar.lz4" >&2
-    else
-        set -o pipefail
-        timeout "$BACKUP_TIMEOUT" adb "${sarr[@]}" 2>>"$LOG" | gzip -9 > "${bfile}.tar.gz"
-        rc=${PIPESTATUS[0]}
-        set +o pipefail
-        if [ "$rc" -eq 124 ]; then
-            log_err "backup TIMEOUT after ${BACKUP_TIMEOUT}s"
+        if [ "$sz" -eq 0 ]; then
+            log_err "backup produced 0-byte archive"
+            rm -f "${bfile}.tar.lz4"
             echo "$(t BackupFailed) $LOG" >&2
             pause; return 1
         fi
-        if [ "$rc" -ne 0 ]; then
-            log_err "backup failed (adb rc=$rc)"
+        log "Backup OK: ${bfile}.tar.lz4 ($sz bytes)"
+        tf BackupDone "${bfile}.tar.lz4" >&2
+    else
+        # ===== fallback: gzip =====
+        set -o pipefail
+        timeout "$BACKUP_TIMEOUT" adb "${sarr[@]}" 2>>"$LOG" | gzip -9 > "${bfile}.tar.gz"
+        rc_array=("${PIPESTATUS[@]}")
+        set +o pipefail
+        local adb_rc=${rc_array[0]}
+        local gz_rc=${rc_array[1]}
+
+        if [ "$adb_rc" -eq 124 ]; then
+            log_err "backup TIMEOUT after ${BACKUP_TIMEOUT}s (adb killed by timeout)"
+            rm -f "${bfile}.tar.gz"
+            echo "$(t BackupFailed) $LOG" >&2
+            pause; return 1
+        fi
+        if [ "$adb_rc" -ne 0 ] || [ "$gz_rc" -ne 0 ]; then
+            log_err "backup failed (adb=$adb_rc gzip=$gz_rc)"
+            rm -f "${bfile}.tar.gz"
             echo "$(t BackupFailed) $LOG" >&2
             pause; return 1
         fi
         local sz
         sz=$(stat -c%s "${bfile}.tar.gz" 2>/dev/null || echo 0)
+        if [ "$sz" -eq 0 ]; then
+            log_err "backup produced 0-byte archive"
+            rm -f "${bfile}.tar.gz"
+            echo "$(t BackupFailed) $LOG" >&2
+            pause; return 1
+        fi
         log "Backup OK: ${bfile}.tar.gz ($sz bytes)"
         tf BackupDone "${bfile}.tar.gz" >&2
     fi
