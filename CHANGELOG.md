@@ -4,6 +4,144 @@
 Формат: [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/).
 Версионирование: [SemVer](https://semver.org/lang/ru/).
 
+## [Unreleased]
+
+### Planned for 1.0.0
+- **Порт `backup_data_stream` в PowerShell** с `Write-Progress` через
+  `CopyToAsync` callback (счётчик переданных байт на лету).
+- **Проверка версий утилит** (не только наличие):
+  `adb`/`fastboot` ≥ 33.0.0 (warning), 7-Zip ≥ 22.00 (hard fail
+  для .zst и `-bsp1`), `zstd` ≥ 1.0.
+- **Флаг `--strict-versions`** — жёсткий отказ на любом warning.
+- **DSU Sideloader integration** — запуск второй GSI без изменения
+  слотов (по запросу пользователя).
+- **Клон слота A → B** — дублирование `system`/`vendor`/`boot`/`dtbo`
+  для безопасных экспериментов без риска для рабочего слота.
+- **Auto-defragment super** — дефрагментация контейнера `super` через
+  `lptools` перед `create-logical-partition`, если фрагментирован.
+- **`lpmake` on-device** — пересборка super на устройстве для случаев,
+  когда GSI не влезает после delete.
+- **Унификация шапок скриптов** (единый формат `.sh` / `.ps1` / `.cmd`).
+- **`set -u` в Linux** — после аудита всех переменных.
+- **Двойное сообщение в Windows `free_super_space`** при `fb_reboot`
+  `error` — ранний выход.
+- **Mac-поддержка** (`uname -m` Darwin, `gtimeout`, `gstat`, `gdf`,
+  `gsha256sum` из coreutils через brew) или отдельная ветка
+  `gsi-tool-macos.sh`.
+- **`Pause()` через `[Console]::ReadKey($true)`** вместо `Read-Host` —
+  реально «любая клавиша», а не Enter.
+- **i18n:** добить оставшиеся хардкодные строки в service-функциях
+  и confirmation prompts.
+
+## [0.9.9] — 2026-09-17
+
+**PowerShell rewrite (Windows) + i18n + tool version checks.**
+Крупный архитектурный релиз: Windows-версия переведена с `cmd.exe` +
+`helper.ps1` на монолитный `gsi-tool.ps1`. Добавлены мультиязычность
+и проверки окружения. Логика flash синхронизирована с Linux-версией.
+
+### Added
+- **PowerShell-порт Windows-версии.** Замена `.cmd` + `helper.ps1`
+  на монолитный `gsi-tool-0.9.9.ps1`.
+  - Launcher `.cmd` сокращён до 5 строк: только `powershell -File`.
+  - Упразднён `helper.ps1` — все функции внутри основного скрипта.
+  - Ноль spawn'ов PowerShell на каждый чих — все операции в одном
+    процессе.
+  - `System.Diagnostics.Process` + `ReadToEndAsync()` для захвата
+    stdout/stderr fastboot — надёжный `ExitCode`, никаких deadlock'ов.
+- **Мультиязычность EN/RU (обе платформы).**
+  - Auto-detect из `$PSUICulture` / `$LANG` / `CurrentUICulture` /
+    `InstalledUICulture`.
+  - Override: `-Lang en|ru` (PS), `--lang=en|ru` (bash).
+  - Тексты встроены в скрипт (хеш-таблица в PS, ассоциативные
+    массивы в bash). Комментарии в коде — английские.
+- **Проверка версий и наличия внешних утилит.**
+  - `adb` / `fastboot` — обязательно наличие, печатается версия.
+  - `timeout`, `od` (Linux) — обязательно наличие.
+  - 7-Zip — печатается путь; отсутствие = warning.
+- **Architecture check.**
+  - Linux: только `x86_64` / `aarch64`, иначе hard fail.
+  - Windows: `Is64BitOperatingSystem` + `Is64BitProcess`.
+- **CLI-флаги.**
+  - PS: `-Lang`, `-Serial`, `-Version`, `-Help`.
+  - Bash: `--lang=`, `--serial=`, `--version`, `--help`.
+- **`-Serial` / `--serial` — таргетинг конкретного устройства** при
+  нескольких подключённых (пробрасывается во все `adb`/`fastboot`).
+- **Build identifier (`+build.<hash>`) в UI и логе.** Не накручивает
+  SemVer, даёт уникальную метку для каждой сборки. Источник:
+  `git rev-parse --short HEAD` если есть `.git`, иначе timestamp
+  `YYYYMMDD.HHmm`.
+- **Полное логирование с уровнями.**
+  - `[INFO]` / `[WARN]` / `[ERROR]` с таймстемпом.
+  - Каждое действие меню, каждая команда fastboot/adb, каждый
+    confirm, каждый выбор файла — попадают в лог.
+  - Сырой вывод внешних утилит пишется через `LogRaw`.
+- **Раздельные таймауты.** `WAIT_ADB=15s`, `WAIT_FASTBOOT=60s`
+  (MTK reboot в fastbootd реально занимает ~35 сек), `REBOOT_TIMEOUT=30s`.
+- **`backup_data_stream` — полный порт на Linux.** Исключения
+  `media`, `dalvik-cache`, `tombstones`, `dropbox`, fallback на
+  GNU tar если BusyBox не поддерживает `--exclude`.
+- **`flash_gki_cores` / `emergency_slot_fix` — портированы на обе
+  платформы.** Выбор `boot*.img` / `vendor_boot*.img` через
+  интерактивный файловый селектор.
+- **Warning про `set_active` в fastbootd на MTK.** Перед попыткой
+  смены слота проверяется `is-userspace`; если `yes` — предупреждение
+  и confirm, потому что MTK fastbootd обычно отказывает.
+- **Size check при выборе системного образа.** Рядом с именем каждого
+  кандидата показывается размер (`[1.55 GB]`), подозрительно маленькие
+  помечаются `[N MB] SUSPICIOUS` (<100 MB) или `[N MB] small`
+  (100–300 MB). При наличии «подозрительных» — warning + confirm перед
+  продолжением. Защищает от прошивки недокачанного или обрезанного GSI.
+- **Убран номер версии из имён файлов.** Файлы называются
+  `gsi-tool.sh`, `gsi-tool.ps1`, `gsi-tool.cmd` — версия живёт
+  только внутри (`TOOL_VERSION`) и в имени релизного архива.
+  Упрощает обновление: пользователь перезаписывает файлы,
+  а не копирует рядом с старыми.
+  
+### Fixed
+- **Windows: `Start-Process -RedirectStandardOutput` не заполнял
+  `ExitCode`.** Симптом: `fastboot` успешно отрабатывал, но
+  скрипт показывал `FAILED`. Причина: `WaitForExit(ms)` возвращает
+  управление до слива потоков, `ExitCode` пустой.
+  Фикс: `System.Diagnostics.Process` + асинхронный `ReadToEndAsync()`
+  для stdout/stderr + `WaitForExit()` без таймаута после слива.
+- **Windows: `\r` в `adb devices` / `fastboot devices` ломал regex.**
+  Фильтр `-match '\sdevice$'` не матчил `device\r`.
+  Фикс: `ForEach-Object { $_.Trim() }` перед regex.
+- **Windows: `set_active` не проверял результат.** При провале
+  (`Unable to set slot` на MTK) `CURRENT_SLOT` всё равно
+  переключался, и следующая команда шла в никуда.
+  Фикс: переключение `CURRENT_SLOT` только при success.
+- **Windows: двойной `Pause` после пунктов меню.** `Pause` был
+  и в `switch`, и после него.
+- **Windows: `Action menu → 0` завершал скрипт, а не возвращал в
+  главное меню.** `break` внутри `switch` в PowerShell выходит
+  только из `switch`. Фикс: внешний цикл + флаг `$Script:BackToMain`.
+- **Linux: `Get-FastbootVar` мог захватить `\r` в значение.**
+  Regex `\S+` → `[^\s\r\n]+`.
+- **Обе: `.Trim()` значений из `getvar` перед использованием.**
+- **Windows: окно cmd закрывалось сразу после успешной прошивки.**
+  `exit 0` в конце `Do-Flash` возвращал в `.cmd` код 0, блок
+  `if %errorlevel% neq 0 ( pause )` не срабатывал, окно закрывалось
+  мгновенно — пользователь не успевал увидеть «Готово.» и лог.
+  Добавлен `Pause` перед `exit 0` во всех финальных ветках
+  (`slot`/`update`/`reset`/`dirty`) и в `Restore-EmergencySlots`.
+
+### Changed
+- Windows: `gsi-tool-0.9.8.cmd` + `gsi-tool-helper-0.9.8.ps1` →
+  `gsi-tool-0.9.9.ps1` (монолит) + `gsi-tool-0.9.9.cmd` (launcher 5 строк).
+- Linux: `gsi-tool-0.9.8.sh` → `gsi-tool-0.9.9.sh` (рефакторинг под
+  общий стиль i18n + логирование + CLI-флаги).
+- Все строки на русском в коде вынесены в i18n-таблицу.
+- Комментарии в коде переведены на английский.
+- Версия в меню и логе показывается как `0.9.9+build.<hash>`;
+  `--version` возвращает чистый `0.9.9` (SemVer для скриптов/CI).
+
+### Removed
+- `gsi-tool-helper-0.9.8.ps1` — упразднён, код слит в `gsi-tool-0.9.9.ps1`.
+- Множественные `spawn powershell.exe` из `.cmd` (ныне один процесс).
+- Дублирующие таймауты `WAIT_TIMEOUT` (разделены на ADB / Fastboot).
+
 ## [0.9.8] — 2026-09-15
 
 **Interactive SHA256 verification + decompression progress.**
@@ -11,39 +149,31 @@
 
 ### Added
 - **Интерактивная SHA256-верификация образов.** Перед `free_super_space`
-  скрипт запрашивает эталонный хеш. Логика:
+  скрипт запрашивает эталонный хеш:
   1. Если рядом лежит `${SYSTEM_IMG}.sha256` — берётся оттуда.
-  2. Иначе — предложение **вставить хеш** (например, скопированный
-     из UI GitHub / темы 4PDA). Парсится regex `[a-f0-9]{64}`, любые
-     пробелы/имя файла/мусор вокруг игнорируются.
-  3. Enter → silent skip (это осознанный UX-выбор: пользователь сам
-     решает, проверять или нет).
+  2. Иначе — предложение вставить хеш вручную (например, из UI GitHub).
+     Парсится regex `[a-f0-9]{64}`, пробелы и мусор игнорируются.
+  3. Enter → silent skip.
   Реализовано:
-  - helper.ps1: режим `verify_sha256`, параметр `-Hash`
-  - `.cmd`: блок в `:free_super_space` (интерактив + вывод)
+  - `helper.ps1`: режим `verify_sha256`, параметр `-Hash`
+  - `.cmd`: блок в `:free_super_space`
   - `.sh`: тот же блок на bash + `sha256sum` + `pv` (если есть)
 - **Прогресс-бар декомпрессии на Windows.** 7-Zip вызывается с
   `-bso0 -bsp1` — виден прогресс распаковки `.xz/.gz/.zst`.
 - **Симметрия `fb_reboot` в action menu.** После `call :fb_reboot`
   в каждом блоке (flash/update/reset/dirty/emergency) добавлено
-  короткое сообщение, если reboot не удался — чтобы пользователь
-  видел, что «Готово» не означает «устройство перезагружено».
+  короткое сообщение, если reboot не удался.
 
 ### Fixed
 - **Helper `verify_sha256` — совместимость с PowerShell 7.**
   `SHA256Managed` устарел в .NET Core, используем
-  `[System.Security.Cryptography.SHA256]::Create()` — работает
-  и в PS 5.1, и в PS 7.
+  `[System.Security.Cryptography.SHA256]::Create()`.
 - **Helper `verify_sha256` — защита от больших `.sha256`.**
-  Файл >4 КБ игнорируется (`error_file_too_large`). Защита от
-  случайного или намеренного OOM.
+  Файл >4 КБ игнорируется (`error_file_too_large`).
 - **Regex групповой захват** — используем `$Matches[1]` /
-  `${BASH_REMATCH[1]}`, а не `[0]` (последний захватил бы всю
-  строку совпадения с границами).
+  `${BASH_REMATCH[1]}`, а не `[0]`.
 - **CHANGELOG 0.9.7 formulation** — «вызывающие проверяют» относилось
-  только к критичным местам (`free_super_space`, `reboot_to_fastbootd`);
-  в action menu проверка не критична (после успешного flash).
-  В 0.9.8 симметрия добавлена.
+  только к критичным местам; в action menu проверка не критична.
 
 ### Changed
 - Linux `.sh`: обновлена шапка `0.9.7 → 0.9.8`.
@@ -93,8 +223,7 @@
   провал `rm` некритичен (файл просто останется в `/data/local/tmp`).
 
 ### Changed
-- Linux `.sh`: обновлена шапка файла `0.9.5 → 0.9.6` (`TOOL_VERSION`
-  был обновлён ещё в 0.9.5, но комментарий-шапка отставал).
+- Linux `.sh`: обновлена шапка файла `0.9.5 → 0.9.6`.
 
 ## [0.9.5] — 2026-09-15
 
@@ -108,33 +237,26 @@
   завершался, скрипт висел навсегда. Реальный сценарий: `tar` пишет
   «permission denied» на десятки файлов из `/data/system` — буфер
   заполняется за секунды.
-  Фикс: stderr направляется в консоль (`RedirectStandardError = $false`),
-  процесс не блокируется.
+  Фикс: stderr направляется в консоль (`RedirectStandardError = $false`).
 - **Критично (Windows): отсутствие таймаута в `stream_backup`.**
-  Если `adb` завис — PowerShell висел вечно. Добавлен `-StreamTimeout 3600`
-  (1 час). При превышении — оба процесса убиваются, `.cmd` получает
-  `timeout` и корректно завершается.
+  Добавлен `-StreamTimeout 3600` (1 час).
 - **Важно (Windows): `ADB_CMD` с одинарными кавычками.**
   В цепочке `cmd → PowerShell → .NET → adb → shell` одинарные кавычки
   вокруг `--exclude='media'` могут теряться или искажаться. Для имён без
   пробелов они не нужны — убраны.
 - **Важно (Windows): `adb reboot bootloader` / `adb reboot fastboot` без
-  таймаута и логирования.** Теперь через helper `-Mode adb_reboot` —
-  с таймаутом 10 сек и обработкой `ok` / `timeout` / `error`.
+  таймаута и логирования.** Теперь через helper `-Mode adb_reboot`.
 - **Профилактика (Windows): `calculate_partition` — try/catch на cast.**
-  Если кто-то передаст нечисловой `-Path`, ловим `InvalidCastException`
-  и возвращаем `0` вместо падения helper.
+  Если кто-то передаст нечисловой `-Path`, ловим `InvalidCastException`.
 - **Проверка (helper): `${actual}:${expected}` вместо `$actual:$expected`.**
   В PowerShell `$var:name` — drive-qualified reference. Не экранированное
   двоеточие вызывало `ParserError: InvalidVariableReferenceWithDrive`.
-  Ловилось только при реальном `suspect:` пути.
 
 ### Changed
 - Linux `.sh`: обновлена шапка `0.9.4 → 0.9.5`.
 - Windows `.cmd`: `HELPER` путь → `gsi-tool-helper-0.9.5.ps1`.
-- Windows helper: новый режим `adb_reboot` (`adb reboot bootloader` /
-  `adb reboot fastboot` с таймаутом).
-- Windows helper: параметр `-StreamTimeout` (по умолчанию 3600 сек).
+- Windows helper: новый режим `adb_reboot`.
+- Windows helper: параметр `-StreamTimeout`.
 
 ## [0.9.4] — 2026-09-15
 
@@ -149,14 +271,11 @@
   получал битый `.tar.7z` на 500 МБ вместо 15 ГБ.
   Заменено на новый режим `stream_backup` в helper.ps1 — через
   `System.Diagnostics.Process` с `RedirectStandardOutput`/`Input`.
-  Оба процесса контролируются, оба `ExitCode` проверяются.
 - **Профилактика (Windows): `calculate_partition` теперь целочисленный.**
   `[Math]::Ceiling($raw / $align)` через `[Double]` заменён на
   `[Math]::DivRem` с `[UInt64]`. Плюс short-circuit на `$raw = 0`.
 - **Linux: fallback для BusyBox tar без `--exclude`.**
-  Проверка поддержки `--exclude` через пробный вызов `tar -cf /dev/null`.
-  Если не поддерживается — предупреждение и предложение бэкапить `/data`
-  целиком (без исключений), а не тихий провал.
+  Проверка поддержки через пробный вызов `tar -cf /dev/null`.
 
 ## [0.9.3] — 2026-09-15
 
@@ -164,22 +283,16 @@
 
 ### Fixed
 - **`flash_slot` (обе платформы): не было reboot.** После прошивки в
-  указанный слот устройство оставалось в fastbootd — пользователь ждал,
-  что скрипт перезагрузит его автоматически (как в опциях 1, 2, 5).
-  Добавлен `safe_reboot` / `:fb_reboot`.
+  указанный слот устройство оставалось в fastbootd.
 - **Windows `fb_reboot`: результат `error` молча игнорировался.**
-  Helper возвращает три значения — `ok`, `timeout`, `error`. `.cmd`
-  проверял только `timeout`. Если `Start-Process` падал — скрипт
-  показывал «Готово.» и закрывался, хотя устройство НЕ перезагружено.
   Теперь `error` обрабатывается с явным предупреждением.
 - **Кроссплатформенная унификация фильтра `select_system_img`.**
   Linux и Windows по-разному отсеивали не-системные образы:
   `boot.img.xz` / `vendor.img.gz` проходили на Linux, `vendor_dlkm.img`
-  на Windows. Теперь единый superset-подход (glob + подстроки).
+  на Windows. Теперь единый superset-подход.
 
 ### Changed
-- Linux `safe_reboot` теперь различает timeout (124) и error — разные
-  сообщения для пользователя.
+- Linux `safe_reboot` теперь различает timeout (124) и error.
 
 ## [0.9.2] — 2026-09-15
 
@@ -187,19 +300,12 @@
 
 ### Fixed
 - **Критично (Windows): `set /a` overflow при расчёте `need_mb`** для
-  `.img.xz` >2 ГБ. Batch `set /a` работает с 32-битным signed int — файл
-  2.5 ГБ давал отрицательный `need_mb`, проверка места всегда «проходила».
+  `.img.xz` >2 ГБ. Batch `set /a` работает с 32-битным signed int.
   Заменено на PowerShell через `helper.ps1 -Mode need_mb_x3 / need_mb_x4`.
 - **Критично (Windows): `fallback_backup` без проверок errorlevel.**
-  Три команды (`adb shell tar`, `adb pull`, `adb shell rm`) выполнялись
-  без контроля. Теперь при провале любой из них — ошибка и выход.
-  Добавлена проверка, что скачанный архив не пустой.
+  Три команды (`adb shell tar`, `adb pull`, `adb shell rm`).
 - **Критично (Linux): `fastboot -w || true` маскировал провал wipe.**
-  Пользователь выбирал «Full Wipe», wipe молча не срабатывал, flash шёл
-  поверх старых данных. Теперь при провале — предупреждение с возможностью
-  отмены.
 - **Windows: `check_bootloader_unlocked` без проверки `get_unlock_ability`.**
-  Расхождение с Linux-версией.
 - **Windows: `.gz` и `.zst` без проверки места на диске.**
 - **Linux: хрупкая логика `[ -z "$real_size" ] || [ "$real_size" -le 0 ] &&`**
   в `free_super_space` → regex-проверка `^[0-9]+$`.
@@ -245,7 +351,8 @@
 **Pre-1.0 baseline.** Первый релиз под строгим SemVer.
 
 ### Added
-- Sparse-aware определение размера образа (magic `3aff26ed`, `blk_sz × total_blks`).
+- Sparse-aware определение размера образа (magic `3aff26ed`,
+  `blk_sz × total_blks`).
 - Sparse integrity check (warning).
 - Выравнивание партиции до 4096 + margin 256 МБ (`GSI_MARGIN_MB`).
 - Warn >4 ГБ для MTK fastbootd.
