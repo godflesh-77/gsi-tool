@@ -619,7 +619,7 @@ function Resolve-SystemImage([string]$Path) {
         if (-not (Test-Path -LiteralPath $out)) {
             Log "Unpacking .xz: $Path -> $out"
             Say "Unpacking: $Path -> $out" 'Cyan'
-            & $Script:SEVENZIP x -y -bso0 -bsp1 $Path | Out-Null
+            & $Script:SEVENZIP x -y -bso0 -bsp1 $Path > $null
             if ($LASTEXITCODE -ne 0) { LogErr 'Unpack .xz failed'; Say 'Unpack .xz failed' 'Red'; return $null }
         }
         return $out
@@ -629,7 +629,7 @@ function Resolve-SystemImage([string]$Path) {
         $out = $Path.Substring(0, $Path.Length - 3)
         if (-not (Test-Path -LiteralPath $out)) {
             Log "Unpacking .gz: $Path -> $out"
-            & $Script:SEVENZIP x -y -bso0 -bsp1 $Path | Out-Null
+            & $Script:SEVENZIP x -y -bso0 -bsp1 $Path > $null
             if ($LASTEXITCODE -ne 0) { LogErr 'Unpack .gz failed'; Say 'Unpack .gz failed' 'Red'; return $null }
         }
         return $out
@@ -639,7 +639,7 @@ function Resolve-SystemImage([string]$Path) {
         $out = $Path.Substring(0, $Path.Length - 4)
         if (-not (Test-Path -LiteralPath $out)) {
             Log "Unpacking .zst: $Path -> $out"
-            & $Script:SEVENZIP x -y -bso0 -bsp1 $Path | Out-Null
+            & $Script:SEVENZIP x -y -bso0 -bsp1 $Path > $null
             if ($LASTEXITCODE -ne 0) { LogErr 'Unpack .zst failed'; Say 'Unpack .zst failed' 'Red'; return $null }
         }
         return $out
@@ -704,7 +704,11 @@ function Invoke-FreeSuperSpace {
     if (-not (Test-Userspace)) {
         Say 'Rebooting to Fastbootd...' 'Cyan'
         Log 'Not in Fastbootd, reboot needed'
-        [void](Invoke-Fb 'reboot' 'fastboot')
+        if (-not (Invoke-Fb 'reboot' 'fastboot')) {
+            LogErr 'fastboot reboot fastboot failed'
+            Say 'ERROR: failed to send reboot command to device.' 'Red'
+            return $false
+        }
         if (-not (Wait-Fastboot)) { return $false }
     }
 
