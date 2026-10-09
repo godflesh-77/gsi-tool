@@ -1,4 +1,3 @@
-
 ---
 
 # gsi-tool
@@ -18,12 +17,21 @@
 - **Автоматическая реконструкция `super`** — удаление `system`/`product`/`system_ext` в обоих слотах с пересозданием нужного раздела (+4096 align +256 МБ margin)
 - **Не трогает** `vendor`, `odm`, `vendor_dlkm`, `system_dlkm` — критично для GKI-устройств
 - **SHA256-верификация** образа перед прошивкой: из файла `<image>.sha256` или интерактивный ввод хеша из GitHub
-- **Автоматическая распаковка** `.img.xz` / `.img.gz` / `.img.zst`
-- **Бэкап `/data`** через ADB-стрим (7-Zip на Windows, `pv`+`lz4` на Linux)
+- **Автоматическая распаковка** `.img.xz` / `.img.gz` / `.img.zst` (Linux — с прогресс-баром через `pv`, если установлен)
+- **Бэкап `/data`** через ADB-стрим на обеих платформах:
+  - Windows — `adb exec-out` → буферный цикл 64 КБ → `7z -si` (прогресс через `Write-Progress`)
+  - Linux — `adb exec-out` → `pv` → `lz4`/`gzip` (при наличии `pv` и `lz4` — быстрый бэкап)
+- **Предупреждение про IMEI / MAC / Widevine** при бэкапе `/data` — эти данные лежат в `/persist`, `/nvram`, `/modemst*`, `/misc`, и в `/data` их нет
 - **Прошивка GKI-ядер** (`boot` + `vendor_boot`) в активный слот
 - **Экстренный откат** — двойная запись ядер в оба слота + `set_active a`
 - **Логирование** всех операций в `logs/`
 - **Защита от Ctrl+C** в критических секциях (Linux)
+- **Мультиязычность** EN/RU с автоопределением и флагами `-Lang` / `--lang=`
+- **Проверка версий** внешних утилит (не только наличия): `adb`/`fastboot` ≥ 33.0.0, 7-Zip ≥ 22.00, `zstd` ≥ 1.0
+- **Флаг `-StrictVersions` / `--strict-versions`** — hard-fail при любом version problem (включая случай «версия не распознана»)
+- **Таргетинг конкретного устройства** через `-Serial` / `--serial=` — все `adb`/`fastboot` вызовы (включая `getvar`, `devices`, `wait`) пробрасывают `-s`
+- **CLI-флаги** для автоматизации: `-Serial`, `-StrictVersions`, `-Version`, `-Help` (PS) / `--serial=`, `--strict-versions`, `--version`, `--help` (bash)
+- **Build identifier** (`+build.<hash>`) в UI и логе для точной идентификации сборки
 
 ---
 
@@ -32,9 +40,9 @@
 | Компонент | Минимум |
 |---|---|
 | **Android platform-tools** (`adb`, `fastboot`) | 33.0.0 (Android 13) |
-| **7-Zip** (только Windows, для `.xz`/`.gz`/`.zst`) | 22.00 |
-| **Linux-утилиты** | `adb`, `fastboot`, `timeout`, `od`, `df`, `awk` (coreutils) |
-| **Опционально (Linux)** | `pv`, `lz4` — для быстрого бэкапа; `unxz`, `gunzip`, `zstd` — для распаковки |
+| **7-Zip** (Windows — обязателен для `.xz`/`.gz`/`.zst` и для бэкапа) | 22.00 |
+| **Linux-утилиты** | `adb`, `fastboot`, `timeout`, `od`, `df`, `awk` (coreutils), `sha256sum`, `grep`, `tr` |
+| **Опционально (Linux)** | `pv` + `lz4` — быстрый бэкап и прогресс распаковки; `unxz`, `gunzip`, `zstd` — распаковка образов |
 | **ОС** | Windows 10/11 x64, Linux x86_64 / aarch64 |
 | **Устройство** | A/B (или non-A/B) с разблокированным загрузчиком |
 
@@ -50,74 +58,58 @@
 2. Распакуйте в любую папку.
 3. Убедитесь, что `adb.exe` и `fastboot.exe` доступны либо в `PATH`, либо лежат в той же папке.
 4. Скачайте [7-Zip 22.00+](https://www.7-zip.org/) и положите `7z.exe` + `7z.dll` рядом со скриптом (или установите 7-Zip в `Program Files`).
-5. Запустите `gsi-tool-<version>.cmd`.
+5. Запустите `gsi-tool.cmd`.
 
 ### Linux
 
-1. Скачайте `gsi-tool-<version>.sh` из релиза.
+1. Скачайте `gsi-tool.sh` из релиза.
 2. Дайте права на исполнение:
    ```bash
-   chmod +x gsi-tool-<version>.sh
-   ```
-3. Установите зависимости:
-   ```bash
-   sudo pacman -S android-tools pv lz4 xz zstd    # Arch / CachyOS
-   sudo apt install android-tools-adb android-tools-fastboot pv lz4 xz-utils zstd  # Debian / Ubuntu
-   ```
-4. Запустите:
-   ```bash
-   ./gsi-tool-<version>.sh
-   ```
+   chmod +x gsi-tool.sh
+Убедитесь, что adb / fastboot из platform-tools 33.0.0+ есть в PATH.
 
----
+(Опционально, для быстрого бэкапа и прогресса распаковки) установите pv и lz4:
 
-## Использование
+bash
+sudo apt install pv lz4    # Debian/Ubuntu
+sudo pacman -S pv lz4      # Arch
+sudo dnf install pv lz4    # Fedora
+Запустите:
 
-Положите GSI-образ (`.img`, `.img.xz`, `.img.gz` или `.img.zst`) в папку со скриптом. Опционально — `vbmeta.img`, если он требуется для вашего устройства.
+bash
+./gsi-tool.sh
+CLI
+Флаг (PS / bash)	Описание
+-Lang en|ru / --lang=en|ru	Форсировать язык UI (по умолчанию — авто из $PSUICulture / $LANG)
+-Serial <serial> / --serial=<serial>	Таргетинг конкретного устройства при нескольких подключённых
+-StrictVersions / --strict-versions	Hard-fail при любом problem в версиях утилит, включая «версия не распознана»
+-Version / --version / -v	Показать версию (1.0.1, без build-суффикса)
+-Help / --help / -h	Показать справку
+Примеры:
 
-Запустите скрипт. Главное меню:
+powershell
+.\gsi-tool.cmd -Serial ABC123 -StrictVersions
+bash
+./gsi-tool.sh --serial=ABC123 --strict-versions
+Безопасность
+Скрипт никогда не форматирует раздел без явного подтверждения.
 
-```
- 1. Проверить устройства (ADB / Fastboot)
- 2. Android  -> Fastbootd
- 3. Recovery -> Fastbootd
- 4. Bootloader -> Fastbootd
- 5. Уже в Fastbootd
- 6. СЕРВИСНОЕ МЕНЮ
- 0. Выход
-```
+Перед fastboot flash проверяется результат каждой команды.
 
-В меню действий:
+При провале create-logical-partition скрипт останавливается и печатает DO NOT REBOOT.
 
-```
- 1. Обновить систему
- 2. Сброс и прошивка (Full Wipe)
- 3. Прошить в указанный слот (A/B)
- 4. Переключить активный слот
- 5. Грязная прошивка
- 0. Назад
-```
+При SHA256-mismatch требуется дополнительный confirm.
 
-Скрипт пошагово проведёт через все подтверждения. Ничего не делается без явного `y`.
+При обнаружении подозрительно маленького образа (<100 МБ) — warning + confirm.
 
----
+При бэкапе /data выводится предупреждение: IMEI, MAC Wi-Fi/Bluetooth и ключи Widevine не входят в этот бэкап — они в /persist, /nvram, /modemst*, /misc.
 
-## ⚠️ Важные предупреждения
+Известные особенности
+MTK fastbootd: fastboot reboot fastboot часто возвращает ненулевой exit code, хотя устройство реально перезагружается (загрузчик рвёт USB до ACK). Скрипт использует tolerant-обёртку и полагается на wait_for_fastboot, а не на exit code.
 
-- **Это не официальный инструмент.** Используйте на свой риск. Автор не несёт ответственности за окирпиченные устройства.
-- **Загрузчик должен быть разблокирован.** Скрипт проверяет это и откажется работать, если залочен.
-- **Бэкап `nvram` / `persist`** — рекомендуется сделать отдельно через TWRP/OrangeFox перед первой прошивкой. На MTK-устройствах иногда теряется IMEI при полной перепрошивке (не из-за этого скрипта, а из-за особенностей разметки).
-- **`vendor`, `odm`, `vendor_dlkm`, `system_dlkm` не трогаются.** Это осознанно — удаление ломает загрузку GSI на GKI-устройствах.
+MTK fastbootd: set_active обычно не работает — используйте bootloader (не fastbootd) для переключения слота. Скрипт предупреждает об этом перед попыткой.
 
----
+MTK -w: fastboot -w иногда ругается на нестандартный layout. В Linux-версии rc игнорируется (продолжаем), в Windows-версии — предупреждение в лог.
 
-## Лицензия
-
-MIT — см. [LICENSE](LICENSE).
-
----
-
-## Благодарности
-
-- **FeDeveloper95** — за оригинальную идею и первый скрипт ([github.com/FeDeveloper95](https://github.com/FeDeveloper95))
-- Ревьюерам, которые ловили реальные баги в `taskkill`, `ReadAllBytes`, `errorlevel` и кракозябрах `cmd.exe`
+Лицензия
+MIT. См. LICENSE.

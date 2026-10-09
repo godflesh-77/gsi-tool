@@ -1,6 +1,9 @@
 # ==============================================================================
-# GSI FLASH & SERVICE TOOL 0.9.9 (PowerShell edition)
-# Windows 10/11 x64 only.
+# GSI FLASH & SERVICE TOOL 1.0.1 (PowerShell edition)
+# Flash GSI, manage A/B slots, back up /data, service partitions.
+#
+# Repository: https://github.com/godflesh-77/gsi-tool
+# License:    MIT
 # ==============================================================================
 
 [CmdletBinding()]
@@ -8,6 +11,7 @@ param(
     [ValidateSet('en','ru')][string]$Lang,
     [switch]$Version,
     [switch]$Help,
+    [switch]$StrictVersions,
     [string]$Serial
 )
 
@@ -15,9 +19,8 @@ $null = [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 $ErrorActionPreference = 'Continue'
 
-$Script:TOOL_VERSION   = '0.9.9'
+$Script:TOOL_VERSION = '1.0.1'
 
-# Build identifier: git short hash if .git exists, else timestamp
 $buildHash = $null
 if (Get-Command git -ErrorAction SilentlyContinue) {
     Push-Location $PSScriptRoot
@@ -28,96 +31,260 @@ if (-not $buildHash) { $buildHash = Get-Date -Format 'yyyyMMdd.HHmm' }
 $Script:BUILD        = $buildHash
 $Script:FULL_VERSION = "$($Script:TOOL_VERSION)+build.$buildHash"
 
-$Script:WAIT_ADB       = 15
-$Script:WAIT_FASTBOOT  = 60
-$Script:REBOOT_TIMEOUT = 30
-$Script:MARGIN_MB      = 256
-$Script:IS_AB          = $true
-$Script:CURRENT_SLOT   = 'a'
-$Script:SEVENZIP       = $null
-$Script:LOG            = $null
-$Script:ADB_PATH       = $null
-$Script:FASTBOOT_PATH  = $null
+$Script:WAIT_ADB        = 15
+$Script:WAIT_FASTBOOT   = 60
+$Script:REBOOT_TIMEOUT  = 30
+$Script:FLASH_TIMEOUT   = 3600
+$Script:BACKUP_TIMEOUT  = 3600
+$Script:MARGIN_MB       = 256
+$Script:IS_AB           = $true
+$Script:CURRENT_SLOT    = 'a'
+$Script:SEVENZIP        = $null
+$Script:LOG             = $null
+$Script:ADB_PATH        = $null
+$Script:FASTBOOT_PATH   = $null
+$Script:ADB_VER         = $null
+$Script:FASTBOOT_VER    = $null
+$Script:SEVENZIP_VER    = $null
+$Script:STRICT_VERSIONS = [bool]$StrictVersions
 
 # ==============================================================================
 # i18n
 # ==============================================================================
 $MSG = @{
     en = @{
-        LogFile        = 'Log'
-        FromAndroid    = 'Android  -> Fastbootd'
-        FromRecovery   = 'Recovery -> Fastbootd'
-        FromBootloader = 'Bootloader -> Fastbootd'
-        AlreadyFb      = 'Already in Fastbootd'
-        ServiceMenu    = 'SERVICE MENU'
-        Exit           = 'Exit'
-        Input          = 'Input: '
-        ActionUpdate   = 'Update system'
-        ActionReset    = 'Reset and flash (Full Wipe)'
-        ActionSlot     = 'Flash to specified slot (A/B)'
-        ActionSwitch   = 'Switch active slot'
-        ActionDirty    = 'Dirty flash'
-        Back           = 'Back'
-        CheckingBl     = 'Checking bootloader state...'
-        BlUnlocked     = 'Bootloader: UNLOCKED'
-        BlLocked       = 'CRITICAL: Bootloader is LOCKED!'
-        WaitAdb        = 'Waiting for ADB device'
-        WaitFastboot   = 'Waiting for Fastboot device'
-        Timeout        = '[TIMEOUT]'
-        Ok             = '[OK]'
-        FoundImg       = 'Found system image'
-        ChooseImg      = 'Found multiple images. Choose one'
-        Cancel         = 'Cancelled.'
-        InvalidChoice  = 'Invalid choice.'
-        EnterSlot      = 'Enter slot (a/b): '
-        EnterConfirm   = 'Continue? (y/N): '
-        FlashOk        = 'Done.'
-        RebuildSuper   = 'SUPER RECONSTRUCTION'
-        Backing        = 'Backup /data via ADB stream'
-        FlashingGki    = 'Flash GKI kernels (boot + vendor_boot)'
-        EmergencyFix   = 'Emergency dual-slot restore'
-        PressKey       = 'Press Enter to continue...'
-        Error          = 'ERROR'
-        ToolCheck      = 'Tool version check'
-        ToolMissing    = 'not found'
+        MainMenuTitle   = 'GSI Flash Tool'
+        LogFile         = 'Log'
+        MenuCheckDev    = 'Check devices (ADB / Fastboot)'
+        MenuFromAndroid = 'Android  -> Fastbootd'
+        MenuFromRecovery= 'Recovery -> Fastbootd'
+        MenuFromBoot    = 'Bootloader -> Fastbootd'
+        MenuAlreadyFb   = 'Already in Fastbootd'
+        ServiceMenu     = 'SERVICE MENU'
+        Exit            = 'Exit'
+        Input           = 'Input: '
+        Back            = 'Back'
+        ActiveSlotLine  = 'Active slot: {0}  [A/B: {1}]'
+
+        ActionUpdate    = 'Update system'
+        ActionReset     = 'Reset and flash (Full Wipe)'
+        ActionSlot      = 'Flash to specified slot (A/B)'
+        ActionSwitch    = 'Switch active slot'
+        ActionDirty     = 'Dirty flash'
+
+        Backing         = 'Backup /data via ADB stream'
+        FlashingGki     = 'Flash GKI kernels (boot + vendor_boot)'
+        EmergencyFix    = 'Emergency dual-slot restore'
+
+        CheckingBl      = 'Checking bootloader state...'
+        BlUnlocked      = 'Bootloader: UNLOCKED'
+        BlLocked        = 'CRITICAL: Bootloader is LOCKED!'
+        BlOemDisabled   = 'ERROR: OEM Unlock disabled in Android!'
+
+        WaitAdb         = 'Waiting for ADB device'
+        WaitFastboot    = 'Waiting for Fastboot device'
+        Timeout         = '[TIMEOUT]'
+        Ok              = '[OK]'
+
+        Error           = 'ERROR'
+        Warning         = 'WARNING'
+        Cancel          = 'Cancelled.'
+        InvalidChoice   = 'Invalid choice.'
+        PressKey        = 'Press any key to continue...'
+        EnterConfirm    = 'Continue? (y/N): '
+        EnterSlot       = 'Enter slot (a/b): '
+        FlashOk         = 'Done.'
+
+        ToolCheck       = 'Tool version check'
+        ToolMissing     = 'not found'
+        VersionTooOld   = 'version too old (need >= {0})'
+        VersionUnknown  = 'version unknown'
+        ToolsWarn       = 'Some tools missing or too old. Basic operations may not work.'
+        StrictFail      = 'Strict version check enabled: aborting on version problems.'
+
+        FoundImg        = 'Found system image'
+        NoSystemImg     = 'No system images found.'
+        ChooseImg       = 'Found multiple images. Choose one'
+        ImgSuspect1     = 'WARNING: one or more images are suspiciously small (<100 MB).'
+        ImgSuspect2     = '         Typical GSI is 600 MB - 4 GB. File may be corrupted,'
+        ImgSuspect3     = '         incomplete, or not a system image at all.'
+        ContinueAnyway  = 'Continue anyway? (y/N): '
+
+        Unpacking       = 'Unpacking: {0} -> {1}'
+        UnpackFailed    = 'Unpack failed: {0}'
+        UnpackProgress  = 'unpack'
+        Need7Zip        = 'Need 7-Zip for {0}'
+
+        RebuildSuper    = 'SUPER RECONSTRUCTION'
+        RebootToFb      = 'Rebooting to Fastbootd...'
+        NotInFbReboot   = 'Not in Fastbootd, reboot needed'
+        TargetPart      = 'Target partition: {0}'
+        NewSize         = 'New size: {0} bytes'
+        NotTouching     = 'NOT touching: vendor / odm / vendor_dlkm / system_dlkm'
+        SuperBigWarn    = 'WARNING: partition > 4 GB. MTK overflow possible.'
+        CreateFailed    = 'CRITICAL: create-logical-partition failed.'
+        CreateFailed2   = 'super left without system/product/system_ext. DO NOT REBOOT.'
+
+        ShaHeader       = 'SHA256 VERIFICATION:'
+        ShaFileFound    = '[INFO] Found .sha256 file.'
+        ShaPrompt       = 'Copy SHA256 hash from GitHub release and paste here (or Enter to skip).'
+        ShaPromptShort  = 'Hash'
+        ShaOk           = '[SHA256] OK.'
+        ShaSkipNoHash   = '[SHA256] Hash not recognized. Skipping.'
+        ShaSkipTooBig   = '[SHA256] .sha256 too large. Skipping.'
+        ShaSkipErr      = '[SHA256] Hash calculation error. Skipping.'
+        ShaSkipUser     = '[SHA256] Check skipped by user.'
+        ShaMismatch     = 'SHA256 mismatch! Real: {0}'
+        ShaRiskPrompt   = 'Continue at your own risk? (y/N): '
+
+        VbMissing       = 'WARNING: vbmeta.img not found. Bootloop possible.'
+        VbContinueNo    = 'Continue without vbmeta? (y/N): '
+        VbInUserspace   = 'WARNING: You are in Fastbootd. vbmeta is a physical partition.'
+        VbFlashing      = 'Flashing vbmeta...'
+
+        NotAb           = 'Device is not A/B.'
+        SetActiveWarn   = 'WARNING: you are in Fastbootd. set_active may not work on MTK.'
+        SetActiveTry    = 'Try anyway? (y/N): '
+        CurrentSlotMsg  = 'Current slot: {0}'
+        SetActiveFail   = 'ERROR: set_active failed. On MTK use bootloader, not fastbootd.'
+
+        SelectBoot      = 'Select BOOT (kernel):'
+        SelectVendor    = 'Select VENDOR_BOOT:'
+        SelectStableBoot= 'Stable BOOT image:'
+        SelectStableVb  = 'Stable VENDOR_BOOT image:'
+        FlashToSlot     = 'Flash to slot _{0}? (y/N): '
+
+        BackupTitle     = 'BACKUP /DATA VIA ADB STREAM'
+        BackupWarning   = 'Ensure device is in recovery (e.g. OrangeFox) and /data is decrypted.'
+        BackupCriticalWarn = 'NOTE: /data backup does NOT include IMEI, Wi-Fi/BT MAC, or Widevine keys.'
+        BackupCriticalHint = '      Those live in /persist, /nvram, /modemst*, /misc. Back them up separately from recovery.'
+        BackupMountOk   = 'Mount check output written to log.'
+        BackupMountAsk  = 'Is /data mounted and decrypted? (y/N): '
+        BackupNoExcl    = 'tar does not support --exclude, doing full backup'
+        BackupProgress  = 'Backup /data'
+        BackupStatusFmt = '{0} MB @ {1} MB/s'
+        BackupDone      = 'Backup OK: {0} ({1} MB)'
+        BackupFailed    = 'Backup FAILED. See log: {0}'
+        BackupNo7Zip    = 'Backup requires 7-Zip. Install 7-Zip 22.00+ and retry.'
+
+        ExitCodeMsg     = 'Exit code: {0}'
     }
     ru = @{
-        LogFile        = 'Лог'
-        FromAndroid    = 'Android  -> Fastbootd'
-        FromRecovery   = 'Recovery -> Fastbootd'
-        FromBootloader = 'Bootloader -> Fastbootd'
-        AlreadyFb      = 'Уже в Fastbootd'
-        ServiceMenu    = 'СЕРВИСНОЕ МЕНЮ'
-        Exit           = 'Выход'
-        Input          = 'Ввод: '
-        ActionUpdate   = 'Обновить систему'
-        ActionReset    = 'Сброс и прошивка (Full Wipe)'
-        ActionSlot     = 'Прошить в указанный слот (A/B)'
-        ActionSwitch   = 'Переключить активный слот'
-        ActionDirty    = 'Грязная прошивка'
-        Back           = 'Назад'
-        CheckingBl     = 'Проверка загрузчика...'
-        BlUnlocked     = 'Загрузчик: РАЗБЛОКИРОВАН'
-        BlLocked       = 'КРИТИЧЕСКАЯ ОШИБКА: Загрузчик заблокирован!'
-        WaitAdb        = 'Ожидание ADB-устройства'
-        WaitFastboot   = 'Ожидание Fastboot-устройства'
-        Timeout        = '[ТАЙМ-АУТ]'
-        Ok             = '[OK]'
-        FoundImg       = 'Найден образ системы'
-        ChooseImg      = 'Найдено несколько образов. Выберите'
-        Cancel         = 'Отменено.'
-        InvalidChoice  = 'Неверный ввод.'
-        EnterSlot      = 'Слот (a/b): '
-        EnterConfirm   = 'Выполнить? (y/N): '
-        FlashOk        = 'Готово.'
-        RebuildSuper   = 'РЕКОНСТРУКЦИЯ SUPER'
-        Backing        = 'Бэкап /data через ADB-стрим'
-        FlashingGki    = 'Прошивка GKI-ядер (boot + vendor_boot)'
-        EmergencyFix   = 'Экстренный откат (оба слота)'
-        PressKey       = 'Нажмите Enter для продолжения...'
-        Error          = 'ОШИБКА'
-        ToolCheck      = 'Проверка версий утилит'
-        ToolMissing    = 'не найден'
+        MainMenuTitle   = 'GSI Flash Tool'
+        LogFile         = 'Лог'
+        MenuCheckDev    = 'Проверить устройства (ADB / Fastboot)'
+        MenuFromAndroid = 'Android  -> Fastbootd'
+        MenuFromRecovery= 'Recovery -> Fastbootd'
+        MenuFromBoot    = 'Bootloader -> Fastbootd'
+        MenuAlreadyFb   = 'Уже в Fastbootd'
+        ServiceMenu     = 'СЕРВИСНОЕ МЕНЮ'
+        Exit            = 'Выход'
+        Input           = 'Ввод: '
+        Back            = 'Назад'
+        ActiveSlotLine  = 'Активный слот: {0}  [A/B: {1}]'
+
+        ActionUpdate    = 'Обновить систему'
+        ActionReset     = 'Сброс и прошивка (Full Wipe)'
+        ActionSlot      = 'Прошить в указанный слот (A/B)'
+        ActionSwitch    = 'Переключить активный слот'
+        ActionDirty     = 'Грязная прошивка'
+
+        Backing         = 'Бэкап /data через ADB-стрим'
+        FlashingGki     = 'Прошивка GKI-ядер (boot + vendor_boot)'
+        EmergencyFix    = 'Экстренный откат (оба слота)'
+
+        CheckingBl      = 'Проверка загрузчика...'
+        BlUnlocked      = 'Загрузчик: РАЗБЛОКИРОВАН'
+        BlLocked        = 'КРИТИЧЕСКАЯ ОШИБКА: Загрузчик заблокирован!'
+        BlOemDisabled   = 'ОШИБКА: в Android выключен OEM Unlock!'
+
+        WaitAdb         = 'Ожидание ADB-устройства'
+        WaitFastboot    = 'Ожидание Fastboot-устройства'
+        Timeout         = '[ТАЙМ-АУТ]'
+        Ok              = '[OK]'
+
+        Error           = 'ОШИБКА'
+        Warning         = 'ВНИМАНИЕ'
+        Cancel          = 'Отменено.'
+        InvalidChoice   = 'Неверный ввод.'
+        PressKey        = 'Нажмите любую клавишу для продолжения...'
+        EnterConfirm    = 'Выполнить? (y/N): '
+        EnterSlot       = 'Слот (a/b): '
+        FlashOk         = 'Готово.'
+
+        ToolCheck       = 'Проверка версий утилит'
+        ToolMissing     = 'не найден'
+        VersionTooOld   = 'версия устарела (нужно >= {0})'
+        VersionUnknown  = 'версия не определена'
+        ToolsWarn       = 'Часть утилит отсутствует или устарела. Базовые операции могут не работать.'
+        StrictFail      = 'Включён строгий режим проверки: отказ из-за проблем с версиями.'
+
+        FoundImg        = 'Найден образ системы'
+        NoSystemImg     = 'Образы системы не найдены.'
+        ChooseImg       = 'Найдено несколько образов. Выберите'
+        ImgSuspect1     = 'ВНИМАНИЕ: один или несколько образов подозрительно малы (<100 МБ).'
+        ImgSuspect2     = '         Типичный GSI весит 600 МБ - 4 ГБ. Файл может быть повреждён,'
+        ImgSuspect3     = '         недокачан, или это вовсе не образ системы.'
+        ContinueAnyway  = 'Всё равно продолжить? (y/N): '
+
+        Unpacking       = 'Распаковка: {0} -> {1}'
+        UnpackFailed    = 'Ошибка распаковки: {0}'
+        UnpackProgress  = 'распаковка'
+        Need7Zip        = 'Для {0} нужен 7-Zip'
+
+        RebuildSuper    = 'РЕКОНСТРУКЦИЯ SUPER'
+        RebootToFb      = 'Перезагрузка в Fastbootd...'
+        NotInFbReboot   = 'Не в Fastbootd, нужна перезагрузка'
+        TargetPart      = 'Целевой раздел: {0}'
+        NewSize         = 'Новый размер: {0} байт'
+        NotTouching     = 'НЕ трогаем: vendor / odm / vendor_dlkm / system_dlkm'
+        SuperBigWarn    = 'ВНИМАНИЕ: раздел > 4 ГБ. Возможно переполнение на MTK.'
+        CreateFailed    = 'КРИТИЧНО: create-logical-partition не удалось.'
+        CreateFailed2   = 'super остался без system/product/system_ext. НЕ ПЕРЕЗАГРУЖАЙТЕ.'
+
+        ShaHeader       = 'ПРОВЕРКА SHA256:'
+        ShaFileFound    = '[INFO] Найден файл .sha256.'
+        ShaPrompt       = 'Скопируйте SHA256 из GitHub-релиза и вставьте сюда (или Enter — пропустить).'
+        ShaPromptShort  = 'Hash'
+        ShaOk           = '[SHA256] OK.'
+        ShaSkipNoHash   = '[SHA256] Хеш не распознан. Пропуск.'
+        ShaSkipTooBig   = '[SHA256] Файл .sha256 слишком большой. Пропуск.'
+        ShaSkipErr      = '[SHA256] Ошибка вычисления хеша. Пропуск.'
+        ShaSkipUser     = '[SHA256] Проверка пропущена пользователем.'
+        ShaMismatch     = 'Несовпадение SHA256! Реальный: {0}'
+        ShaRiskPrompt   = 'Продолжить на свой риск? (y/N): '
+
+        VbMissing       = 'ВНИМАНИЕ: vbmeta.img не найден. Возможен bootloop.'
+        VbContinueNo    = 'Продолжить без vbmeta? (y/N): '
+        VbInUserspace   = 'ВНИМАНИЕ: вы в Fastbootd. vbmeta — физический раздел.'
+        VbFlashing      = 'Прошивка vbmeta...'
+
+        NotAb           = 'Устройство не A/B.'
+        SetActiveWarn   = 'ВНИМАНИЕ: вы в Fastbootd. set_active может не работать на MTK.'
+        SetActiveTry    = 'Всё равно попробовать? (y/N): '
+        CurrentSlotMsg  = 'Текущий слот: {0}'
+        SetActiveFail   = 'ОШИБКА: set_active не удалось. На MTK используйте bootloader, не fastbootd.'
+
+        SelectBoot      = 'Выберите BOOT (ядро):'
+        SelectVendor    = 'Выберите VENDOR_BOOT:'
+        SelectStableBoot= 'Стабильный BOOT-образ:'
+        SelectStableVb  = 'Стабильный VENDOR_BOOT-образ:'
+        FlashToSlot     = 'Прошить в слот _{0}? (y/N): '
+
+        BackupTitle     = 'БЭКАП /DATA ЧЕРЕЗ ADB-СТРИМ'
+        BackupWarning   = 'Убедитесь, что телефон в recovery (например, OrangeFox) и /data расшифрована.'
+        BackupCriticalWarn = 'ВНИМАНИЕ: бэкап /data НЕ включает IMEI, MAC Wi-Fi/Bluetooth и ключи Widevine.'
+        BackupCriticalHint = '         Они лежат в /persist, /nvram, /modemst*, /misc. Бэкапьте их отдельно из recovery.'
+        BackupMountOk   = 'Вывод проверки mount записан в лог.'
+        BackupMountAsk  = '/data смонтирована и расшифрована? (y/N): '
+        BackupNoExcl    = 'tar не поддерживает --exclude, делаем полный бэкап'
+        BackupProgress  = 'Бэкап /data'
+        BackupStatusFmt = '{0} МБ @ {1} МБ/с'
+        BackupDone      = 'Бэкап готов: {0} ({1} МБ)'
+        BackupFailed    = 'Бэкап НЕ УДАЛСЯ. См. лог: {0}'
+        BackupNo7Zip    = 'Для бэкапа нужен 7-Zip. Установите 7-Zip 22.00+ и повторите.'
+
+        ExitCodeMsg     = 'Код выхода: {0}'
     }
 }
 
@@ -164,7 +331,13 @@ function LogRaw([string]$text) {
 
 function Pause() {
     Write-Host ''
-    Read-Host -Prompt (T 'PressKey')
+    Write-Host -NoNewline (T 'PressKey')
+    try {
+        [void][Console]::ReadKey($true)
+    } catch {
+        Read-Host | Out-Null
+    }
+    Write-Host ''
 }
 
 function Confirm([string]$prompt = $null) {
@@ -182,7 +355,7 @@ if ($Version) { Write-Output $Script:TOOL_VERSION; exit 0 }
 if ($Help) {
     Write-Output "GSI Flash Tool $($Script:TOOL_VERSION)"
     Write-Output "Build: $($Script:BUILD)"
-    Write-Output "Usage: gsi-tool.ps1 [-Lang en|ru] [-Serial <serial>] [-Version] [-Help]"
+    Write-Output "Usage: gsi-tool.ps1 [-Lang en|ru] [-Serial <serial>] [-StrictVersions] [-Version] [-Help]"
     exit 0
 }
 
@@ -209,10 +382,12 @@ Add-Content -LiteralPath $Script:LOG -Value "=== SESSION START $(Get-Date) ===" 
 Add-Content -LiteralPath $Script:LOG -Value "Version: $($Script:TOOL_VERSION)" -Encoding UTF8
 Add-Content -LiteralPath $Script:LOG -Value "Build:   $($Script:BUILD)" -Encoding UTF8
 Add-Content -LiteralPath $Script:LOG -Value "Lang: $($Script:Lang) (PSUICulture=$PSUICulture, CurrentUI=$([System.Globalization.CultureInfo]::CurrentUICulture.Name), Installed=$([System.Globalization.CultureInfo]::InstalledUICulture.Name))" -Encoding UTF8
+Add-Content -LiteralPath $Script:LOG -Value "StrictVersions: $($Script:STRICT_VERSIONS)" -Encoding UTF8
+Add-Content -LiteralPath $Script:LOG -Value "Serial: $(if ($Script:Serial) { $Script:Serial } else { '(auto)' })" -Encoding UTF8
 Add-Content -LiteralPath $Script:LOG -Value "PSScriptRoot: $PSScriptRoot" -Encoding UTF8
 
 # ==============================================================================
-# Tool detection
+# Tool detection + version check
 # ==============================================================================
 function Get-ExePath([string]$name) {
     $cmd = Get-Command $name -ErrorAction SilentlyContinue
@@ -220,19 +395,6 @@ function Get-ExePath([string]$name) {
     $local = Join-Path $PSScriptRoot "$name.exe"
     if (Test-Path -LiteralPath $local) { return $local }
     return $null
-}
-
-function Test-ToolVersions {
-    Say (T 'ToolCheck') 'Cyan'
-    Log "Tool version check"
-    $problems = 0
-    if (-not $Script:ADB_PATH)      { Say "  adb      : $(T 'ToolMissing')" 'Red';    LogErr "adb not found";      $problems++ }
-    else                            { Say "  adb      : $($Script:ADB_PATH)" 'Green'; Log "adb: $($Script:ADB_PATH)" }
-    if (-not $Script:FASTBOOT_PATH) { Say "  fastboot : $(T 'ToolMissing')" 'Red';    LogErr "fastboot not found"; $problems++ }
-    else                            { Say "  fastboot : $($Script:FASTBOOT_PATH)" 'Green'; Log "fastboot: $($Script:FASTBOOT_PATH)" }
-    if ($Script:SEVENZIP)           { Say "  7-Zip    : $($Script:SEVENZIP)" 'Green'; Log "7-Zip: $($Script:SEVENZIP)" }
-    else                            { Say "  7-Zip    : $(T 'ToolMissing')" 'Yellow'; LogWarn "7-Zip not found" }
-    return $problems
 }
 
 function Find-7Zip {
@@ -246,20 +408,131 @@ function Find-7Zip {
         if (-not $p) { continue }
         if (Test-Path -LiteralPath $p) {
             $dll = Join-Path (Split-Path $p -Parent) '7z.dll'
-            if (Test-Path -LiteralPath $dll) {
-                $Script:SEVENZIP = $p
-                return $true
-            }
+            if (Test-Path -LiteralPath $dll) { $Script:SEVENZIP = $p; return $true }
         }
     }
     return $false
 }
 
+function Get-ToolVersion([string]$ExePath, [string]$Flag = '--version') {
+    if (-not $ExePath) { return $null }
+    try {
+        $out = & $ExePath $Flag 2>&1 | Out-String
+        $m = [regex]::Matches($out, '(?i)version\s+([0-9]+\.[0-9]+\.[0-9]+)')
+        if ($m.Count -gt 0) { return $m[$m.Count - 1].Groups[1].Value }
+        $m2 = [regex]::Matches($out, '([0-9]+\.[0-9]+\.[0-9]+)')
+        if ($m2.Count -gt 0) { return $m2[0].Groups[1].Value }
+    } catch { }
+    return $null
+}
+
+function Get-7ZipVersion([string]$ExePath) {
+    if (-not $ExePath) { return $null }
+    try {
+        $out = & $ExePath 2>&1 | Out-String
+        $m = [regex]::Match($out, '(?i)7-Zip\s+([0-9]+\.[0-9]+)')
+        if ($m.Success) { return $m.Groups[1].Value }
+    } catch { }
+    return $null
+}
+
+function Compare-ToolVersion([string]$Actual, [string]$Minimum) {
+    if (-not $Actual) { return 0 }
+    try {
+        $a = $Actual
+        $m = $Minimum
+        while (($a -split '\.').Count -lt 3) { $a += '.0' }
+        while (($m -split '\.').Count -lt 3) { $m += '.0' }
+        return ([version]$a).CompareTo([version]$m)
+    } catch { return 0 }
+}
+
+function Test-ToolVersions {
+    Say (T 'ToolCheck') 'Cyan'
+    Log "Tool version check (strict=$($Script:STRICT_VERSIONS))"
+    $problems = 0
+
+    # --- adb ---
+    if (-not $Script:ADB_PATH) {
+        Say "  adb      : $((T 'ToolMissing'))" 'Red'
+        LogErr "adb not found"
+        $problems++
+    } else {
+        $v = Get-ToolVersion $Script:ADB_PATH
+        $Script:ADB_VER = $v
+        if (-not $v) {
+            Say "  adb      : $((T 'VersionUnknown'))  ($($Script:ADB_PATH))" 'Yellow'
+            LogWarn "adb version unknown"
+            $problems++
+        } elseif ((Compare-ToolVersion $v '33.0.0') -lt 0) {
+            Say ("  adb      : $v  " + ((T 'VersionTooOld') -f '33.0.0')) 'Yellow'
+            LogWarn "adb version too old: $v (need >= 33.0.0)"
+            $problems++
+        } else {
+            Say "  adb      : $v  ($($Script:ADB_PATH))" 'Green'
+            Log "adb: $v"
+        }
+    }
+
+    # --- fastboot ---
+    if (-not $Script:FASTBOOT_PATH) {
+        Say "  fastboot : $((T 'ToolMissing'))" 'Red'
+        LogErr "fastboot not found"
+        $problems++
+    } else {
+        $v = Get-ToolVersion $Script:FASTBOOT_PATH
+        $Script:FASTBOOT_VER = $v
+        if (-not $v) {
+            Say "  fastboot : $((T 'VersionUnknown'))  ($($Script:FASTBOOT_PATH))" 'Yellow'
+            LogWarn "fastboot version unknown"
+            $problems++
+        } elseif ((Compare-ToolVersion $v '33.0.0') -lt 0) {
+            Say ("  fastboot : $v  " + ((T 'VersionTooOld') -f '33.0.0')) 'Yellow'
+            LogWarn "fastboot version too old: $v (need >= 33.0.0)"
+            $problems++
+        } else {
+            Say "  fastboot : $v  ($($Script:FASTBOOT_PATH))" 'Green'
+            Log "fastboot: $v"
+        }
+    }
+
+    # --- 7-Zip ---
+    if ($Script:SEVENZIP) {
+        $v = Get-7ZipVersion $Script:SEVENZIP
+        $Script:SEVENZIP_VER = $v
+        if (-not $v) {
+            Say "  7-Zip    : $((T 'VersionUnknown'))  ($($Script:SEVENZIP))" 'Yellow'
+            LogWarn "7-Zip version unknown"
+            $problems++
+        } elseif ((Compare-ToolVersion $v '22.00') -lt 0) {
+            Say ("  7-Zip    : $v  " + ((T 'VersionTooOld') -f '22.00')) 'Yellow'
+            LogWarn "7-Zip version too old: $v (need >= 22.00)"
+            $problems++
+        } else {
+            Say "  7-Zip    : $v  ($($Script:SEVENZIP))" 'Green'
+            Log "7-Zip: $v"
+        }
+    } else {
+        Say "  7-Zip    : $((T 'ToolMissing'))" 'Yellow'
+        LogWarn "7-Zip not found"
+    }
+
+    return $problems
+}
+
 # ==============================================================================
 # Fastboot / ADB wrappers
 # ==============================================================================
+function Format-Args([string[]]$Args) {
+    return ($Args | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }) -join ' '
+}
+
 function Invoke-Fb {
-    param([Parameter(ValueFromRemainingArguments=$true)][string[]]$Args)
+    param(
+        [int]$TimeoutSec = 30,
+        [switch]$Tolerant,
+        [Parameter(ValueFromRemainingArguments=$true)][string[]]$Args
+    )
     $cmdArgs = @()
     if ($Script:Serial) { $cmdArgs += @('-s', $Script:Serial) }
     $cmdArgs += $Args
@@ -267,7 +540,7 @@ function Invoke-Fb {
 
     $proc = New-Object System.Diagnostics.Process
     $proc.StartInfo.FileName               = $Script:FASTBOOT_PATH
-    $proc.StartInfo.Arguments              = ($cmdArgs | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }) -join ' '
+    $proc.StartInfo.Arguments              = Format-Args $cmdArgs
     $proc.StartInfo.RedirectStandardOutput = $true
     $proc.StartInfo.RedirectStandardError  = $true
     $proc.StartInfo.UseShellExecute        = $false
@@ -278,13 +551,12 @@ function Invoke-Fb {
         return $false
     }
 
-    # Async read prevents buffer overrun deadlock on fastboot stderr flood
     $outTask = $proc.StandardOutput.ReadToEndAsync()
     $errTask = $proc.StandardError.ReadToEndAsync()
 
-    if (-not $proc.WaitForExit($Script:REBOOT_TIMEOUT * 1000)) {
+    if (-not $proc.WaitForExit($TimeoutSec * 1000)) {
         try { $proc.Kill() } catch { }
-        LogErr "fastboot TIMEOUT after $($Script:REBOOT_TIMEOUT)s"
+        LogErr "fastboot TIMEOUT after ${TimeoutSec}s"
         return $false
     }
 
@@ -297,12 +569,19 @@ function Invoke-Fb {
 
     if ($out) { LogRaw "  fb stdout: $($out.Trim())" }
     if ($err) { LogRaw "  fb stderr: $($err.Trim())" }
-    if ($exitCode -ne 0) { LogWarn "fastboot exit code: $exitCode" }
-    return ($exitCode -eq 0)
+    if ($exitCode -ne 0) {
+        if ($Tolerant) { Log "fastboot exit=$exitCode (tolerated)"; return $true }
+        LogWarn "fastboot exit code: $exitCode"
+        return $false
+    }
+    return $true
 }
 
 function Invoke-Adb {
-    param([Parameter(ValueFromRemainingArguments=$true)][string[]]$Args)
+    param(
+        [int]$TimeoutSec = 30,
+        [Parameter(ValueFromRemainingArguments=$true)][string[]]$Args
+    )
     $cmdArgs = @()
     if ($Script:Serial) { $cmdArgs += @('-s', $Script:Serial) }
     $cmdArgs += $Args
@@ -310,7 +589,7 @@ function Invoke-Adb {
 
     $proc = New-Object System.Diagnostics.Process
     $proc.StartInfo.FileName               = $Script:ADB_PATH
-    $proc.StartInfo.Arguments              = ($cmdArgs | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }) -join ' '
+    $proc.StartInfo.Arguments              = Format-Args $cmdArgs
     $proc.StartInfo.RedirectStandardOutput = $true
     $proc.StartInfo.RedirectStandardError  = $true
     $proc.StartInfo.UseShellExecute        = $false
@@ -324,9 +603,9 @@ function Invoke-Adb {
     $outTask = $proc.StandardOutput.ReadToEndAsync()
     $errTask = $proc.StandardError.ReadToEndAsync()
 
-    if (-not $proc.WaitForExit($Script:REBOOT_TIMEOUT * 1000)) {
+    if (-not $proc.WaitForExit($TimeoutSec * 1000)) {
         try { $proc.Kill() } catch { }
-        LogErr "adb TIMEOUT after $($Script:REBOOT_TIMEOUT)s"
+        LogErr "adb TIMEOUT after ${TimeoutSec}s"
         return $false
     }
 
@@ -345,7 +624,7 @@ function Invoke-Adb {
 
 function Invoke-FbFlash {
     param([Parameter(ValueFromRemainingArguments=$true)][string[]]$Args)
-    if (-not (Invoke-Fb @Args)) {
+    if (-not (Invoke-Fb -TimeoutSec $Script:FLASH_TIMEOUT @Args)) {
         LogErr "fb_flash FAILED: fastboot $($Args -join ' ')"
         Say (T 'Error') 'Red'
         Say "  fastboot $($Args -join ' ') FAILED. See log: $($Script:LOG)" 'Red'
@@ -356,11 +635,25 @@ function Invoke-FbFlash {
     return $true
 }
 
+function Get-AdbDevices {
+    $cmdArgs = @()
+    if ($Script:Serial) { $cmdArgs += @('-s', $Script:Serial) }
+    $cmdArgs += 'devices'
+    return (& $Script:ADB_PATH @cmdArgs 2>$null)
+}
+
+function Get-FastbootDevices {
+    $cmdArgs = @()
+    if ($Script:Serial) { $cmdArgs += @('-s', $Script:Serial) }
+    $cmdArgs += 'devices'
+    return (& $Script:FASTBOOT_PATH @cmdArgs 2>$null)
+}
+
 function Wait-Adb {
     param([int]$Timeout = $Script:WAIT_ADB)
     Write-Host -NoNewline (T 'WaitAdb')
     for ($i = 0; $i -lt $Timeout; $i++) {
-        $devs = & $Script:ADB_PATH devices 2>$null | Select-Object -Skip 1 | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '\s(device|recovery)$' }
+        $devs = Get-AdbDevices | Select-Object -Skip 1 | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '\s(device|recovery)$' }
         if ($devs) {
             Say " $((T 'Ok'))" 'Green'
             Log "ADB found: $($devs -join ', ')"
@@ -378,7 +671,7 @@ function Wait-Fastboot {
     param([int]$Timeout = $Script:WAIT_FASTBOOT)
     Write-Host -NoNewline (T 'WaitFastboot')
     for ($i = 0; $i -lt $Timeout; $i++) {
-        $devs = & $Script:FASTBOOT_PATH devices 2>$null | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '\sfastboot$' }
+        $devs = Get-FastbootDevices | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '\sfastboot$' }
         if ($devs) {
             Say " $((T 'Ok'))" 'Green'
             Log "Fastboot found: $($devs -join ', ')"
@@ -393,7 +686,10 @@ function Wait-Fastboot {
 }
 
 function Get-FastbootVar([string]$name) {
-    $out = & $Script:FASTBOOT_PATH getvar $name 2>&1 | Out-String
+    $cmdArgs = @()
+    if ($Script:Serial) { $cmdArgs += @('-s', $Script:Serial) }
+    $cmdArgs += @('getvar', $name)
+    $out = & $Script:FASTBOOT_PATH @cmdArgs 2>&1 | Out-String
     if ($out -match "$name\s*:\s*([^\s\r\n]+)") { return $Matches[1].Trim() }
     return $null
 }
@@ -427,7 +723,7 @@ function Test-BootloaderUnlocked {
     Log "Bootloader: unlocked=$u secure=$s get_unlock_ability=$a"
     if ($u -eq 'yes') { Say "  $((T 'BlUnlocked'))" 'Green'; Log "Bootloader UNLOCKED (unlocked=yes)"; return $true }
     if ($s -eq 'no')  { Say "  $((T 'BlUnlocked'))" 'Green'; Log "Bootloader UNLOCKED (secure=no)"; return $true }
-    if ($a -eq '0')   { Say '  ERROR: OEM Unlock disabled in Android!' 'Red'; LogErr "OEM Unlock disabled"; return $false }
+    if ($a -eq '0')   { Say "  $((T 'BlOemDisabled'))" 'Red'; LogErr "OEM Unlock disabled"; return $false }
     Say "  $((T 'BlLocked'))" 'Red'
     LogErr "Bootloader LOCKED"
     return $false
@@ -547,9 +843,8 @@ function Select-SystemImage {
     }
     Log "Select-SystemImage: found $($sys.Count) candidate(s)"
     foreach ($f in $sys) { Log "  candidate: $($f.Name)" }
-    if ($sys.Count -eq 0) { LogWarn 'No system images found'; Say 'No system images found.' 'Red'; return $null }
+    if ($sys.Count -eq 0) { LogWarn 'No system images found'; Say (T 'NoSystemImg') 'Red'; return $null }
 
-    # Size check — GSI normally weighs 600 MB - 4 GB
     $sizeWarn = $false
     foreach ($f in $sys) {
         $sizeMB = [Math]::Round($f.Length / 1MB)
@@ -561,10 +856,10 @@ function Select-SystemImage {
         }
     }
     if ($sizeWarn) {
-        Say 'WARNING: one or more images are suspiciously small (<100 MB).' 'Yellow'
-        Say '         Typical GSI is 600 MB - 4 GB. File may be corrupted,' 'Yellow'
-        Say '         incomplete, or not a system image at all.' 'Yellow'
-        if (-not (Confirm 'Continue anyway? (y/N): ')) { Log 'Aborted due to size check'; return $null }
+        Say (T 'ImgSuspect1') 'Yellow'
+        Say (T 'ImgSuspect2') 'Yellow'
+        Say (T 'ImgSuspect3') 'Yellow'
+        if (-not (Confirm (T 'ContinueAnyway'))) { Log 'Aborted due to size check'; return $null }
     }
 
     if ($sys.Count -eq 1) {
@@ -613,36 +908,30 @@ function Select-BootImage {
 
 function Resolve-SystemImage([string]$Path) {
     $lower = $Path.ToLower()
-    if ($lower -match '\.img\.xz$') {
-        if (-not $Script:SEVENZIP) { LogErr 'Need 7-Zip for .xz'; Say 'Need 7-Zip for .xz' 'Red'; return $null }
-        $out = $Path.Substring(0, $Path.Length - 3)
-        if (-not (Test-Path -LiteralPath $out)) {
-            Log "Unpacking .xz: $Path -> $out"
-            Say "Unpacking: $Path -> $out" 'Cyan'
-            & $Script:SEVENZIP x -y -bso0 -bsp1 $Path > $null
-            if ($LASTEXITCODE -ne 0) { LogErr 'Unpack .xz failed'; Say 'Unpack .xz failed' 'Red'; return $null }
+    foreach ($spec in @(
+        @{ Ext = '\.img\.xz$';  Suffix = 3; Kind = '.xz';  Name = 'xz' },
+        @{ Ext = '\.img\.gz$';  Suffix = 3; Kind = '.gz';  Name = 'gz' },
+        @{ Ext = '\.img\.zst$'; Suffix = 4; Kind = '.zst'; Name = 'zst' }
+    )) {
+        if ($lower -match $spec.Ext) {
+            if (-not $Script:SEVENZIP) {
+                LogErr (T 'Need7Zip' -f $spec.Kind)
+                Say ((T 'Need7Zip') -f $spec.Kind) 'Red'
+                return $null
+            }
+            $out = $Path.Substring(0, $Path.Length - $spec.Suffix)
+            if (-not (Test-Path -LiteralPath $out)) {
+                Log "Unpacking $($spec.Kind): $Path -> $out"
+                Say ((T 'Unpacking') -f $Path, $out) 'Cyan'
+                & $Script:SEVENZIP x -y -bso0 -bsp1 $Path > $null
+                if ($LASTEXITCODE -ne 0) {
+                    LogErr ((T 'UnpackFailed') -f $spec.Kind)
+                    Say ((T 'UnpackFailed') -f $spec.Kind) 'Red'
+                    return $null
+                }
+            }
+            return $out
         }
-        return $out
-    }
-    if ($lower -match '\.img\.gz$') {
-        if (-not $Script:SEVENZIP) { LogErr 'Need 7-Zip for .gz'; Say 'Need 7-Zip for .gz' 'Red'; return $null }
-        $out = $Path.Substring(0, $Path.Length - 3)
-        if (-not (Test-Path -LiteralPath $out)) {
-            Log "Unpacking .gz: $Path -> $out"
-            & $Script:SEVENZIP x -y -bso0 -bsp1 $Path > $null
-            if ($LASTEXITCODE -ne 0) { LogErr 'Unpack .gz failed'; Say 'Unpack .gz failed' 'Red'; return $null }
-        }
-        return $out
-    }
-    if ($lower -match '\.img\.zst$') {
-        if (-not $Script:SEVENZIP) { LogErr 'Need 7-Zip for .zst'; Say 'Need 7-Zip for .zst' 'Red'; return $null }
-        $out = $Path.Substring(0, $Path.Length - 4)
-        if (-not (Test-Path -LiteralPath $out)) {
-            Log "Unpacking .zst: $Path -> $out"
-            & $Script:SEVENZIP x -y -bso0 -bsp1 $Path > $null
-            if ($LASTEXITCODE -ne 0) { LogErr 'Unpack .zst failed'; Say 'Unpack .zst failed' 'Red'; return $null }
-        }
-        return $out
     }
     return $Path
 }
@@ -662,7 +951,7 @@ function Invoke-FreeSuperSpace {
     Log "Sparse integrity: $integrity"
     if ($integrity -match '^suspect:') {
         Say "Sparse image looks suspicious: $integrity" 'Yellow'
-        if (-not (Confirm 'Continue anyway? (y/N): ')) { return $false }
+        if (-not (Confirm (T 'ContinueAnyway'))) { return $false }
     } elseif ($integrity -eq 'error') {
         Say 'Sparse integrity check error' 'Yellow'
     }
@@ -673,15 +962,15 @@ function Invoke-FreeSuperSpace {
     Say ("raw=$rawSize, part=$partSize (margin=$($Script:MARGIN_MB)MB)") 'Gray'
 
     Say '--------------------------------------------------------' 'Cyan'
-    Say 'SHA256 VERIFICATION:' 'Cyan'
+    Say (T 'ShaHeader') 'Cyan'
     $userHash = ''
     if (Test-Path -LiteralPath "${SystemImg}.sha256") {
         Log 'Found .sha256 file'
-        Say '[INFO] Found .sha256 file.' 'Green'
+        Say (T 'ShaFileFound') 'Green'
         $userHash = 'file'
     } else {
-        Say 'Copy SHA256 hash from GitHub release and paste here (or Enter to skip).' 'Gray'
-        $userHash = Read-Host -Prompt 'Hash'
+        Say (T 'ShaPrompt') 'Gray'
+        $userHash = Read-Host -Prompt (T 'ShaPromptShort')
         Log "SHA256 input: $(if ($userHash) { 'provided' } else { 'skipped' })"
     }
     if ($userHash) {
@@ -689,38 +978,35 @@ function Invoke-FreeSuperSpace {
         if ($res -match '^mismatch:') {
             LogErr "SHA256 mismatch: $res"
             Say (T 'Error') 'Red'
-            Say "  Real: $res" 'Red'
-            if (-not (Confirm 'Continue at your own risk? (y/N): ')) { return $false }
-        } elseif ($res -eq 'ok') { Say '[SHA256] OK.' 'Green' }
-        elseif ($res -eq 'missing') { Say '[SHA256] Hash not recognized. Skipping.' 'Yellow' }
-        elseif ($res -eq 'error_file_too_large') { Say '[SHA256] .sha256 too large. Skipping.' 'Yellow' }
-        elseif ($res -eq 'error') { Say '[SHA256] Hash calculation error. Skipping.' 'Yellow' }
-    } else { Say '[SHA256] Check skipped by user.' 'Yellow' }
+            Say ((T 'ShaMismatch') -f $res) 'Red'
+            if (-not (Confirm (T 'ShaRiskPrompt'))) { return $false }
+        } elseif ($res -eq 'ok') { Say (T 'ShaOk') 'Green' }
+        elseif ($res -eq 'missing') { Say (T 'ShaSkipNoHash') 'Yellow' }
+        elseif ($res -eq 'error_file_too_large') { Say (T 'ShaSkipTooBig') 'Yellow' }
+        elseif ($res -eq 'error') { Say (T 'ShaSkipErr') 'Yellow' }
+    } else { Say (T 'ShaSkipUser') 'Yellow' }
     Say '--------------------------------------------------------' 'Cyan'
 
     $tpart = Get-SysPart $Slot
     $opp = if ($Slot -eq 'a') { 'b' } else { 'a' }
 
     if (-not (Test-Userspace)) {
-        Say 'Rebooting to Fastbootd...' 'Cyan'
-        Log 'Not in Fastbootd, reboot needed'
-        # On MTK, 'fastboot reboot fastboot' often returns non-zero because the
-        # bootloader drops USB before ACK. The reboot may have succeeded —
-        # rely on Wait-Fastboot instead of checking exit code.
-        [void](Invoke-Fb 'reboot' 'fastboot')
+        Say (T 'RebootToFb') 'Cyan'
+        Log (T 'NotInFbReboot')
+        [void](Invoke-Fb -Tolerant 'reboot' 'fastboot')
         if (-not (Wait-Fastboot)) { return $false }
     }
 
     Say '--------------------------------------------------------' 'Cyan'
     Say (T 'RebuildSuper') 'Cyan'
-    Say "  Target partition: $tpart" 'Gray'
-    Say "  New size: $partSize bytes" 'Gray'
-    Say '  NOT touching: vendor / odm / vendor_dlkm / system_dlkm' 'Gray'
+    Say ((T 'TargetPart') -f $tpart) 'Gray'
+    Say ((T 'NewSize') -f $partSize) 'Gray'
+    Say (T 'NotTouching') 'Gray'
     Say '--------------------------------------------------------' 'Cyan'
     if (-not (Confirm)) { Log 'Rebuild cancelled by user'; return $false }
 
     if ($partSize -gt 4GB) {
-        Say 'WARNING: partition > 4 GB. MTK overflow possible.' 'Yellow'
+        Say (T 'SuperBigWarn') 'Yellow'
         if (-not (Confirm)) { return $false }
     }
 
@@ -741,8 +1027,8 @@ function Invoke-FreeSuperSpace {
     Say "Creating $tpart ($partSize bytes)..." 'Cyan'
     if (-not (Invoke-Fb 'create-logical-partition' $tpart "$partSize")) {
         LogErr "create-logical-partition failed"
-        Say 'CRITICAL: create-logical-partition failed.' 'Red'
-        Say 'super left without system/product/system_ext. DO NOT REBOOT.' 'Red'
+        Say (T 'CreateFailed') 'Red'
+        Say (T 'CreateFailed2') 'Red'
         return $false
     }
     Log "Partition $tpart recreated: $partSize bytes"
@@ -756,20 +1042,163 @@ function Confirm-Vbmeta {
     $vb = Join-Path $PSScriptRoot 'vbmeta.img'
     if (-not (Test-Path -LiteralPath $vb)) {
         LogWarn 'vbmeta.img not found, asking user'
-        Say 'WARNING: vbmeta.img not found. Bootloop possible.' 'Yellow'
-        return (Confirm 'Continue without vbmeta? (y/N): ')
+        Say (T 'VbMissing') 'Yellow'
+        return (Confirm (T 'VbContinueNo'))
     }
     if (Test-Userspace) {
         LogWarn 'In Fastbootd, vbmeta is a physical partition'
-        Say 'WARNING: You are in Fastbootd. vbmeta is a physical partition.' 'Yellow'
+        Say (T 'VbInUserspace') 'Yellow'
     }
     Log "Flashing vbmeta: $vb"
-    Say 'Flashing vbmeta...' 'Cyan'
+    Say (T 'VbFlashing') 'Cyan'
     if (-not (Invoke-FbFlash '--disable-verity' '--disable-verification' 'flash' 'vbmeta' $vb)) {
-        return (Confirm 'Continue without vbmeta? (y/N): ')
+        return (Confirm (T 'VbContinueNo'))
     }
     Log 'vbmeta flashed OK'
     return $true
+}
+
+# ==============================================================================
+# Backup /data via ADB stream
+# ==============================================================================
+function Backup-DataStream {
+    Clear-Host
+    Log "=== Backup-DataStream ==="
+    Say (T 'BackupTitle') 'Cyan'
+
+    if (-not $Script:SEVENZIP) {
+        Say (T 'BackupNo7Zip') 'Red'
+        LogErr 'Backup requires 7-Zip'
+        Pause; return
+    }
+    if (-not (Wait-Adb)) { Pause; return }
+
+    Say (T 'BackupWarning') 'Yellow'
+    Say (T 'BackupCriticalWarn') 'Yellow'
+    Say (T 'BackupCriticalHint') 'Yellow'
+
+    # --- mount check ---
+    Log "Mount check: /data"
+    $mountArgs = @()
+    if ($Script:Serial) { $mountArgs += @('-s', $Script:Serial) }
+    $mountArgs += @('shell', "mount | grep -E '/data|f2fs|ext4' || true")
+    try {
+        $mountOut = & $Script:ADB_PATH @mountArgs 2>&1 | Out-String
+        if ($mountOut) { LogRaw "mount: $($mountOut.Trim())" }
+    } catch { LogWarn "mount check failed: $_" }
+    Say (T 'BackupMountOk') 'Gray'
+    if (-not (Confirm (T 'BackupMountAsk'))) { Log 'Backup cancelled at mount prompt'; return }
+
+    # --- excludes support probe ---
+    $excludes = '--exclude=media --exclude=dalvik-cache --exclude=tombstones --exclude=dropbox'
+    $probeArgs = @()
+    if ($Script:Serial) { $probeArgs += @('-s', $Script:Serial) }
+    $probeArgs += @('shell', "echo ADB_OK; tar $excludes -cf /dev/null -C /data . 2>/dev/null; echo RC=\$?")
+    $probeOut = ''
+    try { $probeOut = & $Script:ADB_PATH @probeArgs 2>&1 | Out-String } catch { }
+    if ($probeOut -notmatch 'ADB_OK') {
+        LogErr "adb shell probe failed (adb lost connection?)"
+        Say ((T 'BackupFailed') -f $Script:LOG) 'Red'
+        Pause; return
+    }
+    $useExcludes = ($probeOut -match 'RC=0\s*$')
+    if (-not $useExcludes) {
+        LogWarn 'tar --exclude not supported, doing full backup'
+        Say (T 'BackupNoExcl') 'Yellow'
+        $excludes = ''
+    }
+
+    # --- output path ---
+    $backupDir = Join-Path $PSScriptRoot ("backups\data_" + (Get-Date -Format 'yyyyMMdd_HHmmss'))
+    New-Item -ItemType Directory -Path $backupDir -Force | Out-Null
+    $outFile = Join-Path $backupDir 'userdata_backup.tar.7z'
+    Log "Backup target: $outFile"
+
+    $remoteTar = "tar -c -C /data $excludes ."
+
+    # --- start adb exec-out tar ---
+    $adbArgs = @()
+    if ($Script:Serial) { $adbArgs += @('-s', $Script:Serial) }
+    $adbArgs += @('exec-out', $remoteTar)
+
+    $adbProc = New-Object System.Diagnostics.Process
+    $adbProc.StartInfo.FileName               = $Script:ADB_PATH
+    $adbProc.StartInfo.Arguments              = Format-Args $adbArgs
+    $adbProc.StartInfo.RedirectStandardOutput = $true
+    $adbProc.StartInfo.RedirectStandardError  = $false
+    $adbProc.StartInfo.UseShellExecute        = $false
+    $adbProc.StartInfo.CreateNoWindow         = $true
+
+    # --- start 7z (stream writer) ---
+    $szProc = New-Object System.Diagnostics.Process
+    $szProc.StartInfo.FileName               = $Script:SEVENZIP
+    $szProc.StartInfo.Arguments              = "a -sidata.tar -t7z -mx=9 -bso0 -bsp0 `"$outFile`""
+    $szProc.StartInfo.RedirectStandardInput  = $true
+    $szProc.StartInfo.RedirectStandardOutput = $false
+    $szProc.StartInfo.RedirectStandardError  = $false
+    $szProc.StartInfo.UseShellExecute        = $false
+    $szProc.StartInfo.CreateNoWindow         = $true
+
+    $started = $false
+    try {
+        Log "Starting adb exec-out tar"
+        [void]$adbProc.Start()
+        Log "Starting 7z (writer)"
+        [void]$szProc.Start()
+        $started = $true
+
+        $buffer      = New-Object byte[] 65536
+        $totalBytes  = [UInt64]0
+        $lastUpdate  = [DateTime]::UtcNow
+        $sw          = [System.Diagnostics.Stopwatch]::StartNew()
+
+        while (($read = $adbProc.StandardOutput.BaseStream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+            $szProc.StandardInput.BaseStream.Write($buffer, 0, $read)
+            $totalBytes += $read
+            if (([DateTime]::UtcNow - $lastUpdate).TotalMilliseconds -ge 500) {
+                $mb    = [Math]::Round($totalBytes / 1MB, 1)
+                $speed = if ($sw.Elapsed.TotalSeconds -gt 0) { [Math]::Round($totalBytes / 1MB / $sw.Elapsed.TotalSeconds, 1) } else { 0 }
+                Write-Progress -Activity (T 'BackupProgress') `
+                               -Status   ((T 'BackupStatusFmt') -f $mb, $speed) `
+                               -PercentComplete -1
+                $lastUpdate = [DateTime]::UtcNow
+            }
+        }
+        Log "adb stdout EOF, total=$totalBytes bytes"
+
+        $szProc.StandardInput.BaseStream.Flush()
+        $szProc.StandardInput.Close()
+        $adbProc.WaitForExit()
+        $szProc.WaitForExit()
+        Write-Progress -Activity (T 'BackupProgress') -Completed
+
+        $adbRc = $adbProc.ExitCode
+        $szRc  = $szProc.ExitCode
+        Log "adb exit=$adbRc  7z exit=$szRc"
+        if ($adbRc -ne 0) { LogWarn "adb exec-out tar exit code: $adbRc" }
+        if ($szRc -ne 0) {
+            LogErr "7z exit code: $szRc"
+            Say ((T 'BackupFailed') -f $Script:LOG) 'Red'
+            Pause; return
+        }
+
+        if (Test-Path -LiteralPath $outFile) {
+            $sz = (Get-Item -LiteralPath $outFile).Length
+            $mb = [Math]::Round($sz / 1MB, 1)
+            Say ((T 'BackupDone') -f $outFile, $mb) 'Green'
+            Log "Backup OK: $outFile ($sz bytes)"
+        }
+        Pause
+    } catch {
+        LogErr "Backup exception: $_"
+        Say ((T 'BackupFailed') -f $Script:LOG) 'Red'
+        Write-Progress -Activity (T 'BackupProgress') -Completed
+        if ($started) {
+            try { if (-not $adbProc.HasExited) { $adbProc.Kill() } } catch { }
+            try { if (-not $szProc.HasExited)  { $szProc.Kill()  } } catch { }
+        }
+        Pause
+    }
 }
 
 # ==============================================================================
@@ -778,9 +1207,9 @@ function Confirm-Vbmeta {
 function Install-GkiKernels {
     Clear-Host
     Log "=== Install-GkiKernels ==="
-    $boot = Select-BootImage -Mask 'boot*.img' -Prompt 'Select BOOT (kernel):'
+    $boot = Select-BootImage -Mask 'boot*.img' -Prompt (T 'SelectBoot')
     if (-not $boot) { return }
-    $vb = Select-BootImage -Mask 'vendor_boot*.img' -Prompt 'Select VENDOR_BOOT:'
+    $vb = Select-BootImage -Mask 'vendor_boot*.img' -Prompt (T 'SelectVendor')
     if (-not $vb) { return }
     Log "boot=$boot vendor_boot=$vb"
 
@@ -790,7 +1219,7 @@ function Install-GkiKernels {
     if (-not (Test-BootloaderUnlocked)) { Pause; return }
 
     $slot = Get-CurrentSlot
-    if (Confirm "Flash to slot _$slot? (y/N): ") {
+    if (Confirm ((T 'FlashToSlot') -f $slot)) {
         if (-not (Invoke-FbFlash 'flash' "boot_$slot" $boot)) { Pause; return }
         if (-not (Invoke-FbFlash 'flash' "vendor_boot_$slot" $vb)) { Pause; return }
         [void](Invoke-Fb 'erase' 'cache')
@@ -802,9 +1231,9 @@ function Install-GkiKernels {
 function Restore-EmergencySlots {
     Clear-Host
     Log "=== Restore-EmergencySlots ==="
-    $b = Select-BootImage -Mask 'boot*.img' -Prompt 'Stable BOOT image:'
+    $b = Select-BootImage -Mask 'boot*.img' -Prompt (T 'SelectStableBoot')
     if (-not $b) { return }
-    $v = Select-BootImage -Mask 'vendor_boot*.img' -Prompt 'Stable VENDOR_BOOT image:'
+    $v = Select-BootImage -Mask 'vendor_boot*.img' -Prompt (T 'SelectStableVb')
     if (-not $v) { return }
     Log "boot=$b vendor_boot=$v"
 
@@ -828,14 +1257,14 @@ function Restore-EmergencySlots {
 # ==============================================================================
 function Show-MainMenu {
     Clear-Host
-    Say "GSI Flash Tool $($Script:FULL_VERSION) (PowerShell)" 'Cyan'
+    Say "$(T 'MainMenuTitle') $($Script:FULL_VERSION) (PowerShell)" 'Cyan'
     Say "$(T 'LogFile'): $($Script:LOG)" 'Gray'
     Say '========================================================' 'Cyan'
-    Say "  1. Check devices (ADB / Fastboot)"
-    Say "  2. $(T 'FromAndroid')"
-    Say "  3. $(T 'FromRecovery')"
-    Say "  4. $(T 'FromBootloader')"
-    Say "  5. $(T 'AlreadyFb')"
+    Say "  1. $(T 'MenuCheckDev')"
+    Say "  2. $(T 'MenuFromAndroid')"
+    Say "  3. $(T 'MenuFromRecovery')"
+    Say "  4. $(T 'MenuFromBoot')"
+    Say "  5. $(T 'MenuAlreadyFb')"
     Say "  6. $(T 'ServiceMenu')"
     Say "  0. $(T 'Exit')"
     Say '========================================================' 'Cyan'
@@ -846,7 +1275,7 @@ function Show-MainMenu {
 
 function Show-ActionMenu {
     Clear-Host
-    Say "Active slot: $($Script:CURRENT_SLOT)  [A/B: $($Script:IS_AB)]" 'Cyan'
+    Say ((T 'ActiveSlotLine') -f $Script:CURRENT_SLOT, $Script:IS_AB) 'Cyan'
     Say '========================================================' 'Cyan'
     Say "  1. $(T 'ActionUpdate')"
     Say "  2. $(T 'ActionReset')"
@@ -941,7 +1370,12 @@ $Script:FASTBOOT_PATH = Get-ExePath 'fastboot'
 Find-7Zip | Out-Null
 $problems = Test-ToolVersions
 if ($problems -gt 0) {
-    Say 'Some tools missing. Basic operations may not work.' 'Yellow'
+    if ($Script:STRICT_VERSIONS) {
+        Say (T 'StrictFail') 'Red'
+        LogErr "Strict version check failed ($problems problem(s)); aborting"
+        exit 1
+    }
+    Say (T 'ToolsWarn') 'Yellow'
     if (-not (Confirm)) { exit 1 }
 }
 
@@ -956,7 +1390,7 @@ while ($true) {
                     $s = Show-ServiceMenu
                     if ($s -eq '0') { break }
                     switch ($s) {
-                        '1' { Log 'Service: backup_data_stream (not yet ported)'; Say 'Backup: not yet ported from 0.9.8' 'Yellow' }
+                        '1' { Backup-DataStream }
                         '2' { Install-GkiKernels }
                         '3' { Restore-EmergencySlots }
                         default { Log "Unknown service choice: $s" }
@@ -964,10 +1398,16 @@ while ($true) {
                 }
             }
             '5' { if (Wait-Fastboot) { $Script:Proceed = $true } }
-            '4' { if (Wait-Fastboot) { [void](Invoke-Fb 'reboot' 'fastboot'); if (Wait-Fastboot) { $Script:Proceed = $true } } }
+            '4' { if (Wait-Fastboot) { [void](Invoke-Fb -Tolerant 'reboot' 'fastboot'); if (Wait-Fastboot) { $Script:Proceed = $true } } }
             '3' { if (Wait-Adb)   { [void](Invoke-Adb 'reboot' 'fastboot'); if (Wait-Fastboot) { $Script:Proceed = $true } } }
             '2' { if (Wait-Adb)   { [void](Invoke-Adb 'reboot' 'fastboot'); if (Wait-Fastboot) { $Script:Proceed = $true } } }
-            '1' { & $Script:ADB_PATH devices; & $Script:FASTBOOT_PATH devices }
+            '1' {
+                Log "Devices: adb / fastboot"
+                Say '-- ADB --' 'Cyan'
+                & $Script:ADB_PATH devices
+                Say '-- Fastboot --' 'Cyan'
+                & $Script:FASTBOOT_PATH devices
+            }
             default { }
         }
         if (-not $Script:Proceed) { Pause }
@@ -984,20 +1424,20 @@ while ($true) {
         switch ($a) {
             '0' { Log 'Back to main menu'; $Script:BackToMain = $true }
             '4' {
-                if (-not $Script:IS_AB) { Say 'Device is not A/B.' 'Yellow'; Pause; continue }
+                if (-not $Script:IS_AB) { Say (T 'NotAb') 'Yellow'; Pause; continue }
                 $newSlot = if ($Script:CURRENT_SLOT -eq 'a') { 'b' } else { 'a' }
                 if (Test-Userspace) {
                     LogWarn "set_active in fastbootd: may fail on MTK"
-                    Say 'WARNING: you are in Fastbootd. set_active may not work on MTK.' 'Yellow'
-                    if (-not (Confirm 'Try anyway? (y/N): ')) { continue }
+                    Say (T 'SetActiveWarn') 'Yellow'
+                    if (-not (Confirm (T 'SetActiveTry'))) { continue }
                 }
                 if (Invoke-Fb 'set_active' $newSlot) {
                     $Script:CURRENT_SLOT = $newSlot
                     Log "Switched active slot to $($Script:CURRENT_SLOT)"
-                    Say "Current slot: $($Script:CURRENT_SLOT)" 'Green'
+                    Say ((T 'CurrentSlotMsg') -f $Script:CURRENT_SLOT) 'Green'
                 } else {
                     LogErr "set_active $newSlot FAILED"
-                    Say 'ERROR: set_active failed. On MTK use bootloader, not fastbootd.' 'Red'
+                    Say (T 'SetActiveFail') 'Red'
                 }
                 Pause
             }

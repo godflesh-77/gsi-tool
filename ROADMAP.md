@@ -1,91 +1,58 @@
-## [Unreleased]
+# Roadmap
 
-### Planned for 0.9.9
-- **Полный порт Windows-версии с `cmd.exe` на PowerShell.** 
-  Причины:
-  - cmd.exe — legacy-наследие MS-DOS с крашами парсера на скобках
-    внутри `if (...)`, drive-ref проблемами `$var:name`, 32-bit `set /a`,
-    обязательным экранированием `^(`, `^<`, `^>` внутри блоков.
-  - Кодировочный ад: CP866/CP1251/UTF-8-BOM → ANSI, `chcp`, BOM
-    ломающий `@echo off`.
-  - Нет встроенной криптографии → helper.ps1 в обход.
-  - Pipe не пробрасывает exit code первого процесса.
-  
-  Архитектура после порта:
-  - `gsi-tool.ps1` — вся логика (main menu, action menu, все функции).
-  - `gsi-tool.cmd` — launcher в 5 строк: 
-    `powershell -NoProfile -ExecutionPolicy Bypass -File gsi-tool.ps1 %*`
-  - helper.ps1 упраздняется — код сливается в основной `.ps1`.
-  - 7-Zip остаётся только для `.xz/.zst` (у PS нет встроенных для них).
-  - UTF-8 без BOM — нативная поддержка.
-  - `Write-Host -ForegroundColor` для цветного вывода.
-  - `try/catch`, `$LASTEXITCODE`, `[int64]` — вместо костылей.
-  
-  Портировать функции:
-  - `Main menu`, `Action menu`, `Service menu`
-  - `select_system_img`, `resolve_system_img`
-  - `check_and_flash_vbmeta`, `free_super_space`
-  - `fb_flash`, `fb_reboot`, `fb_reboot_adb`
-  - `check_bootloader_unlocked`, `detect_ab_device`
-  - `backup_data_stream`, `flash_gki_cores`, `emergency_slot_fix`
-  - `wait_for_adb`, `wait_for_fastboot`, `get_current_slot`, `get_userspace`
-  - Все helper-режимы (`size`, `sparse_integrity`, `calculate_partition`,
-    `verify_sha256`, `stream_backup`, `disk_free_mb`, `need_mb_x3/x4`,
-    `reboot`, `adb_reboot`, `timestamp`)
-- **PowerShell-порт (0.9.9)**: уберёт legacy-cmd костыли:
-  `USER_HASH=file` magic string → явный параметр `-FromFile`;
-  `dirty_flash` без SHA256 → опциональный pre-check;
-  `$sha256.Dispose()` в catch-ветке (утечка);
-  `set /p` внутри трёх уровней if → плоская структура;
-  `Write-Error` в helper → `Write-Output` для `for /f` совместимости.
-  Все эти пункты в PowerShell-версии решаются автоматически.
-- **PowerShell-порт Windows-версии** (замена `.cmd` + helper.ps1 на монолитный `gsi-tool.ps1`).
-  - Упраздняет cmd-hell: BOM, CP1251, `errorlevel` в pipe, `exit /b` в скобках, `set /a` overflow.
-  - Launcher `.cmd` в 5 строк, только ASCII, `powershell -ExecutionPolicy Bypass -File`.
-  - `[Console]::OutputEncoding` + `$OutputEncoding = UTF8` для корректного вывода.
-  - Функции вместо меток: `Get-ImageSize`, `Test-SparseIntegrity`, `Invoke-FbFlash`,
-    `Get-CurrentSlot`, `Invoke-VerifySha256`, `New-SuperPartition`, `Start-DataBackup`,
-    `Install-GkiKernels`, `Restore-EmergencySlots`, `Show-MainMenu`, `Show-ActionMenu`,
-    `Show-ServiceMenu`, `Select-SystemImage`, `Resolve-SystemImage`, `Confirm-Vbmeta`.
-  - Прогресс-бар бэкапа через `Write-Progress` + `CopyToAsync`.
-  - Автоматическое устранение spawn'ов helper'а (минус 200–500 мс на каждый вызов).
-- **Мультиязычность EN/RU.**
-  - Auto-detect: `$LANG`/`CurrentUICulture` в PS, `$LANG` в bash.
-  - Override: `-Lang ru` (PS), `--lang=ru` (bash).
-  - Тексты встроены (хеш-таблица `$MSG` в PS, `MSG_RU`/`MSG_EN` в bash).
-  - Комментарии в коде — на английском.
-- **Проверка версий внешних утилит** (до главного меню):
-  - `adb` / `fastboot` ≥ 33.0.0 — warning.
-  - `7z.exe` ≥ 22.00 — **hard fail** (нестабильный `.zst` и `-bsp1` на старых версиях).
-  - `unxz` / `gunzip` / `zstd` (Linux) — warning.
-  - Формат: таблица `[Tool Check]` с версиями и статусом `✓` / `⚠` / `✗`.
-  - Флаг `--strict-versions` для жёсткого отказа на любом warning.
-- **Только x86_64 / aarch64.**
-  - Windows: `[Environment]::Is64BitOperatingSystem` + `Is64BitProcess` check.
-  - Linux: `uname -m` ∈ {`x86_64`, `aarch64`}.
-  - 32-bit Windows и i386/ARMv7 Linux — не поддерживаются.
+## Выполнено в 1.0.1 (2026-10-09)
+- **Fix-релиз**: закрыты 6 багов, найденных при перечитывании 1.0.0:
+  - `.ps1`: `Get-FastbootVar` / `Wait-Adb` / `Wait-Fastboot` не пробрасывали `-s Serial` — команды уходили на случайное устройство при нескольких подключённых
+  - Обе платформы: `Test-ToolVersions` не увеличивал счётчик при «version unknown» — `-StrictVersions` не ловил этот случай
+  - `.sh`: бэкап без `BACKUP_TIMEOUT` — при зависании `adb exec-out` пайплайн ждал вечно
+  - `.sh`: probe `tar --exclude` не отличал «tar без поддержки» от «adb отвалился»
+  - `.sh`: `resolve_system_image` не показывал ошибку распаковки пользователю
+- **Унифицированные шапки** `.sh` / `.ps1` / `.cmd` — единый формат с репо и лицензией.
+- **Предупреждение про IMEI / MAC / Widevine** при бэкапе `/data`.
+- **Прогресс-бар распаковки через `pv`** в `.sh`.
 
-### Planned for 1.0.0
-- **Опциональная SHA256-верификация образов.** Отдельный режим
-  `verify_sha256` в helper (regex `(?i)[a-f0-9]{64}`), локальная
-  реализация на Linux с тем же regex. `ok` / `mismatch` / `missing` /
-  `no_hash_in_file`.
-- **Прогресс-бар декомпрессии** на Windows через 7-Zip `-bsp1`.
-- **Прогресс-бар бэкапа** на Windows через `stream_backup` (счётчик
-  переданных байт в helper).
-- **Backup critical partitions** — nvram / persist / modemst через
-  `dd` из recovery. Опциональный пункт сервисного меню.
-- **Предупреждение про IMEI/MAC/Widevine** в шапке `backup_data_stream`:
-  `/data`-бэкап их не содержит.
-- **Опциональный `lpmake`** для случаев, когда GSI физически не влезает
-  в super после удаления `product`/`system_ext`.
-- **`-s <serial>`** — поддержка нескольких подключённых устройств.
-- **Унификация шапок** всех скриптов (единый формат на `.sh` / `.cmd` /
-  `.ps1`).
-- **`set -u`** в Linux-версии (после аудита всех переменных).
-- **Объединение PowerShell-вызовов** — один `super_prep` вместо
-  четырёх (`size`, `sparse_integrity`, `calculate_partition`, `>4GB`).
-- **`$args` → `$rebootArgs`** (сделано в 0.9.5, но пункт остаётся для
-  аудита).
-- **Финальный smoke-тест на живом GSI** (Lunaris с GitHub) + публикация.
-- **Унификация шапок** уже после PowerShell-порта.
+## Выполнено в 1.0.0 (2026-10-09)
+- **`Backup-DataStream` в PowerShell** — `adb exec-out` → буферный цикл 64 КБ → `7z -si` через stdin, прогресс `Write-Progress`, `-s Serial` пробрасывается, exceptions убивают оба процесса.
+- **`Test-ToolVersions`** — проверка не только наличия, но и версии: `adb`/`fastboot` ≥ 33.0.0, 7-Zip ≥ 22.00, `zstd` ≥ 1.0.
+- **`-StrictVersions` / `--strict-versions`** — hard-fail на любом problem.
+- **`Pause()` через `[Console]::ReadKey($true)`** в PowerShell — реально «любая клавиша».
+- **i18n: 90+ ключей EN/RU** в паритете между `.ps1` и `.sh`.
+- **`fb_tolerant` / `-Tolerant`** — MTK-специфичный non-zero от `reboot fastboot` не считается ошибкой.
+- **Отдельные таймауты flash / backup** — `FLASH_TIMEOUT=3600`, `BACKUP_TIMEOUT=3600`.
+- **Фикс критического бага Linux-бэкапа** — `adb exec-out` вместо буферизующего `adb_()`, `set -o pipefail` + `PIPESTATUS[0]`.
+
+## Выполнено в 0.9.9 (2026-09-17)
+- PowerShell-порт Windows-версии: монолитный `gsi-tool.ps1` + launcher `.cmd` (5 строк)
+- Упразднён `helper.ps1`
+- Мультиязычность EN/RU (auto-detect + флаги `-Lang` / `--lang=`)
+- Проверка наличия внешних утилит
+- Architecture check (x86_64 / aarch64, 64-bit Windows)
+- CLI-флаги: `-Serial`, `-Version`, `-Help` (PS) / `--serial=`, `--version`, `--help` (bash)
+- Build identifier (`+build.<hash>`) в UI и логе
+- Полное логирование с уровнями (INFO/WARN/ERROR)
+- Раздельные таймауты (ADB / Fastboot / Reboot)
+- SHA256-верификация образов
+- Автоматическая распаковка `.img.xz/.gz/.zst`
+- Реконструкция `super` с выравниванием и margin
+- Прошивка GKI-ядер и экстренный откат
+- Защита от `set_active` в fastbootd на MTK
+- Size check при выборе системного образа
+
+## 1.1.0
+- **DSU Sideloader integration** — запуск второй GSI без изменения слотов.
+- **Клон слота A → B** — дублирование `system`/`vendor`/`boot`/`dtbo` для безопасных экспериментов.
+- **Auto-defragment super** — дефрагментация контейнера `super` через `lptools`.
+- **`lpmake` on-device** — пересборка super на устройстве, если GSI не влезает после delete.
+- **Унификация логики бэкапа** между `.sh` и `.ps1` (единый формат архива).
+- **Mac-поддержка** (`uname -m` Darwin, `gtimeout`, `gstat`, `gdf`, `gsha256sum`).
+- **Backup critical partitions** — nvram / persist / modemst через `dd` из recovery.
+- **`set -u` в Linux** — после аудита всех переменных.
+- **Объединение helper-вызовов** в `super_prep` (Linux).
+
+## 2.0.0 (идеи)
+- GUI-обёртка (Electron / Tauri) для Windows и Linux.
+- Поддержка не-A/B устройств (A-only) с автоматическим определением.
+- Интеграция с GitHub Releases для автоматической загрузки GSI.
+- Экспорт отчёта о прошивке в JSON / HTML.
+- Флаг `-Admin` для Windows (запуск с повышением прав).
+- Автоматическая проверка обновлений скрипта через GitHub API.

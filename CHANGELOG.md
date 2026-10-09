@@ -4,34 +4,138 @@
 Формат: [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/).
 Версионирование: [SemVer](https://semver.org/lang/ru/).
 
-## [Unreleased]
+## [1.0.1] — 2026-10-09
 
-### Planned for 1.0.0
-- **Порт `backup_data_stream` в PowerShell** с `Write-Progress` через
-  `CopyToAsync` callback (счётчик переданных байт на лету).
-- **Проверка версий утилит** (не только наличие):
-  `adb`/`fastboot` ≥ 33.0.0 (warning), 7-Zip ≥ 22.00 (hard fail
-  для .zst и `-bsp1`), `zstd` ≥ 1.0.
-- **Флаг `--strict-versions`** — жёсткий отказ на любом warning.
-- **DSU Sideloader integration** — запуск второй GSI без изменения
-  слотов (по запросу пользователя).
-- **Клон слота A → B** — дублирование `system`/`vendor`/`boot`/`dtbo`
-  для безопасных экспериментов без риска для рабочего слота.
-- **Auto-defragment super** — дефрагментация контейнера `super` через
-  `lptools` перед `create-logical-partition`, если фрагментирован.
-- **`lpmake` on-device** — пересборка super на устройстве для случаев,
-  когда GSI не влезает после delete.
-- **Унификация шапок скриптов** (единый формат `.sh` / `.ps1` / `.cmd`).
-- **`set -u` в Linux** — после аудита всех переменных.
-- **Двойное сообщение в Windows `free_super_space`** при `fb_reboot`
-  `error` — ранний выход.
-- **Mac-поддержка** (`uname -m` Darwin, `gtimeout`, `gstat`, `gdf`,
-  `gsha256sum` из coreutils через brew) или отдельная ветка
-  `gsi-tool-macos.sh`.
-- **`Pause()` через `[Console]::ReadKey($true)`** вместо `Read-Host` —
-  реально «любая клавиша», а не Enter.
-- **i18n:** добить оставшиеся хардкодные строки в service-функциях
-  и confirmation prompts.
+**Fix-релиз.** Закрыты баги, найденные при перечитывании 1.0.0. Плюс
+тривиальные улучшения, отложенные ранее: унификация шапок, IMEI/MAC/
+Widevine warning, `pv`-прогресс распаковки. Никаких новых крупных фич.
+
+### Added
+- **Унифицированные шапки `.sh` / `.ps1` / `.cmd`.** Единый формат:
+  имя, версия, платформа, назначение, ссылка на репозиторий, лицензия.
+- **Предупреждение про IMEI / MAC / Widevine при бэкапе `/data`**
+  (обе платформы). После основного `BackupWarning` выводятся две
+  строки: бэкап `/data` НЕ включает IMEI, MAC Wi-Fi/BT, ключи
+  Widevine — они лежат в `/persist`, `/nvram`, `/modemst*`, `/misc`.
+  Новые i18n-ключи: `BackupCriticalWarn`, `BackupCriticalHint`.
+- **Прогресс-бар распаковки через `pv` на Linux.** Новый хелпер
+  `decompress_with_progress` оборачивает `unxz` / `gunzip` / `zstd`
+  в пайп с `pv -s <size>` (процент + ETA + скорость). Показывается
+  только если `pv` установлен и `stderr` — терминал. При отказе
+  декомпрессора временный файл удаляется (`rm -f "$out"`), чтобы не
+  осталось гигабайтных обрубков образов. Новый ключ `UnpackProgress`.
+
+### Fixed
+- **Критично (PowerShell): `Get-FastbootVar` не пробрасывал `-s Serial`.**
+  При двух подключённых устройствах `current-slot`, `slot-count`,
+  `unlocked`, `secure`, `get_unlock_ability`, `is-userspace` уходили
+  на случайное устройство. `Test-BootloaderUnlocked`, `Get-CurrentSlot`,
+  `Get-SlotCount`, `Test-Userspace` работали по чужому девайсу.
+  Fix: собирать `@('-s', $Serial, 'getvar', $name)` и вызывать через
+  array splatting.
+- **Критично (PowerShell): `Wait-Adb` / `Wait-Fastboot` не пробрасывали
+  `-s Serial`.** Цикл ожидания мог увидеть чужое устройство и вернуть
+  `$true` преждевременно — все последующие команды уходили не туда.
+  Fix: общие хелперы `Get-AdbDevices` / `Get-FastbootDevices`,
+  собирающие аргументы с `-s`.
+- **Важно (обе): `Test-ToolVersions` не увеличивал счётчик проблем при
+  «version unknown».** Из-за этого `-StrictVersions` / `--strict-versions`
+  не ловил случай «adb есть, но версия не парсится» (новая нумерация,
+  локализованный вывод, кастомная сборка). Fix: `$problems++` в обеих
+  ветках «unknown» (adb, fastboot, 7-Zip, zstd на Linux).
+- **Важно (Linux): `backup_data_stream` без таймаута.** В `.ps1`
+  `BACKUP_TIMEOUT=3600` был, в `.sh` — нет. При зависании `adb exec-out`
+  на середине потока (USB-драйвер, флешка отвалилась) `pv` и `lz4`
+  ждали вечно. Fix: `BACKUP_TIMEOUT=3600` + `timeout` вокруг `adb`;
+  различаем rc=124 (timeout) и прочие ненулевые.
+- **Важно (Linux): probe `tar --exclude` не отличал «tar не поддерживает»
+  от «adb отвалился».** При потере adb probe возвращал пустой `pout`,
+  скрипт уходил в «full backup», который падал с невнятной ошибкой.
+  Fix: эхо-маркер `ADB_OK` в probe, отдельный hard-fail на потерю adb.
+- **Средне (Linux): `resolve_system_image` логировал ошибки распаковки
+  только в файл (`log_err`), но не выводил пользователю.** В `.ps1`
+  ветки уже показывали `Say 'UnpackFailed'`, в `.sh` — нет. Fix:
+  `tf UnpackFailed ... >&2` в каждой ветке (нет утилиты / утилита упала).
+
+### Changed
+- **Версия поднята 1.0.0 → 1.0.1.** `TOOL_VERSION` в `.sh` / `.ps1`,
+  заголовок `.cmd`, `title`.
+- **`.ps1`: добавлены хелперы `Get-AdbDevices` / `Get-FastbootDevices`** —
+  единая точка сбора аргументов `devices` с учётом `-s`.
+- **Лог-шапка:** в SESSION START добавлена строка `Serial: ...` (или
+  `(auto)`), чтобы в логе было видно, был ли задан `-Serial`.
+
+## [1.0.0] — 2026-10-09
+
+**Первый стабильный релиз.** Полный паритет Windows/Linux по функциям
+бэкапа и проверки версий, строгий режим, фикс критического бага стриминга
+в Linux-версии, унификация i18n и Pause-поведения.
+
+### Added
+- **`Backup-DataStream` в PowerShell.** Полный порт Linux-версии:
+  `adb exec-out tar` → буферный цикл 64 КБ → `7z -si` через stdin.
+  Прогресс через `Write-Progress` каждые 500 мс (`MB @ MB/s`).
+  - `stderr` от `adb` идёт в консоль (без 4-КБ-deadlock).
+  - `WaitForExit()` без таймаута после закрытия stdin 7z.
+  - Exceptions принудительно убивают оба процесса (без orphaned 7z).
+  - `-s Serial` пробрасывается в `adb exec-out`.
+  - Логирование mount-операций и probe `tar --exclude`.
+- **`Test-ToolVersions` (обе платформы).** Проверяет не только наличие,
+  но и версию: `adb ≥ 33.0.0`, `fastboot ≥ 33.0.0`, `7-Zip ≥ 22.00`
+  (Windows — обязательный; Linux — опционально), `zstd ≥ 1.0` (если
+  установлен). Три исхода: «не найден» / «версия не определена» /
+  «версия устарела».
+- **`-StrictVersions` / `--strict-versions`.** Hard-fail на любом
+  version problem. Пробрасывается через `.cmd` без изменений (`%*`).
+- **`Pause()` через `[Console]::ReadKey($true)`** в PowerShell — реально
+  «любая клавиша», а не Enter. Fallback на `Read-Host` в non-interactive.
+- **i18n: 90+ ключей EN/RU** в паритете между `.ps1` и `.sh`. Хелпер
+  `tf KEY arg1 ...` в bash (аналог `-f` в PowerShell) для
+  параметризованных строк.
+- **`fb_tolerant` (bash) / `-Tolerant` (PS)** — non-zero exit от
+  `fastboot reboot fastboot` на MTK не считается ошибкой. Убирает
+  двойное сообщение `[WARN] fastboot exit` + `[ERROR] TIMEOUT`.
+- **Отдельные таймауты для flash и backup.** `FLASH_TIMEOUT=3600`,
+  `BACKUP_TIMEOUT=3600`. Раньше использовался общий `REBOOT_TIMEOUT=30`,
+  что убивало прошивку 2 ГБ GSI через USB 2.0 на ~90-й секунде.
+
+### Fixed
+- **Критично (Linux): `backup_data_stream` писал пустой файл.**
+  Функция вызывала `adb_ shell "tar -c ..."`, а `adb_()` использует
+  `out=$(...)` и **не отдаёт вывод в stdout** — пайп `| pv | lz4`
+  получал пустоту. При этом `rc` брался от `lz4` (0), а не от `adb`.
+  Плюс `tar`-probe страдал тем же.
+  Фикс: прямой `adb exec-out` (без CRLF-конверсии `adb shell`),
+  `set -o pipefail` + `PIPESTATUS[0]` для корректного `rc`.
+- **Критично (PowerShell): `Invoke-Fb` использовал `REBOOT_TIMEOUT`
+  (30 с) для всех вызовов, включая `fastboot flash`.** Прошивка
+  реального GSI на 2 ГБ стабильно убивалась `Kill()` по таймауту.
+  Фикс: параметр `-TimeoutSec` (default 30), для flash — 3600.
+- **Windows: `Select-SystemImage` мог вернуть `.img.xz`, но
+  `Resolve-SystemImage` не находил `7z.exe`** и возвращал `$null`
+  без явного указания причины. Теперь — понятное сообщение
+  `Need 7-Zip for .xz` через i18n.
+- **Linux: `interactive_file_select` / `select_system_image` —
+  ложное «файл найден» при отсутствии масок.** Из-за
+  `shopt -u nullglob` массив содержал литерал `*.img`.
+  Фикс: `shopt -s nullglob` + проверка `${#files[@]} -eq 0`.
+- **Linux: `wait_for_adb` / `wait_for_fastboot` — CRLF в выводе
+  `adb devices` / `fastboot devices` на MTK.** Добавлен `tr -d '\r'`
+  перед `grep` (паритет с фиксом `.ps1` от 0.9.9).
+- **Обе: `free_super_space` / `Invoke-FreeSuperSpace` — двойное
+  сообщение при MTK-специфичном non-zero exit `fastboot reboot fastboot`.**
+  Теперь через tolerant-обёртку.
+
+### Changed
+- **Версия поднята 0.9.9 → 1.0.0.** `TOOL_VERSION` в `.sh` / `.ps1`,
+  заголовок `.cmd`, `title`.
+- **`check_tool_versions` (bash)** — переписан с `version_ge` через
+  `sort -V` (семантическое сравнение, не лексикографическое).
+- **`gsi-tool.cmd`** — структурно без изменений (`%*` уже пробрасывает
+  новые флаги), только версия в `title`.
+- **Все строки на русском/английском в `.sh` и `.ps1`** вынесены в
+  i18n-таблицы. Добавлены ключи для: SHA256-блока, vbmeta, backup,
+  tool check, size check, super reconstruction, slot ops, GKI, emergency.
 
 ## [0.9.9] — 2026-09-17
 
@@ -97,7 +201,7 @@
   только внутри (`TOOL_VERSION`) и в имени релизного архива.
   Упрощает обновление: пользователь перезаписывает файлы,
   а не копирует рядом с старыми.
-  
+
 ### Fixed
 - **Windows: `Start-Process -RedirectStandardOutput` не заполнял
   `ExitCode`.** Симптом: `fastboot` успешно отрабатывал, но
@@ -142,7 +246,7 @@
 - **Linux: `${var,,}` (Bash 4.0+) → `tr 'A-F' 'a-f'`.** Приведение
   регистра хеша через POSIX-совместимый конвейер. Синтаксис Bash 4.x
   работал, но `tr` надёжнее в embed-окружениях с урезанным bash.
-  
+
 ### Changed
 - Windows: `gsi-tool-0.9.8.cmd` + `gsi-tool-helper-0.9.8.ps1` →
   `gsi-tool-0.9.9.ps1` (монолит) + `gsi-tool-0.9.9.cmd` (launcher 5 строк).

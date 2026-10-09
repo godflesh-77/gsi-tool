@@ -1,12 +1,14 @@
 #!/bin/bash
 # ==============================================================================
-# GSI FLASH & SERVICE TOOL 0.9.9 (Linux)
-# Windows 10/11 is served by gsi-tool.ps1
+# GSI FLASH & SERVICE TOOL 1.0.1 (Linux)
+# Flash GSI, manage A/B slots, back up /data, service partitions.
+#
+# Repository: https://github.com/godflesh-77/gsi-tool
+# License:    MIT
 # ==============================================================================
 
-TOOL_VERSION="0.9.9"
+TOOL_VERSION="1.0.1"
 
-# Build identifier: git short hash if .git exists, else timestamp
 if command -v git >/dev/null 2>&1 && [ -d .git ]; then
     BUILD=$(git rev-parse --short HEAD 2>/dev/null || date +%Y%m%d.%H%M)
 else
@@ -18,11 +20,14 @@ FULL_VERSION="${TOOL_VERSION}+build.${BUILD}"
 LANG_CODE="en"
 FORCE_LANG=""
 SERIAL=""
+STRICT_VERSIONS="no"
 WAIT_ADB=15
 WAIT_FASTBOOT=60
 REBOOT_TIMEOUT=30
-MARGIN_MB=256
+FLASH_TIMEOUT=3600
+BACKUP_TIMEOUT=3600
 UNPACK_TIMEOUT=3600
+MARGIN_MB=256
 
 IS_AB_DEVICE="yes"
 CURRENT_SLOT="a"
@@ -39,11 +44,12 @@ for arg in "$@"; do
         --help|-h)
             echo "GSI Flash Tool $TOOL_VERSION"
             echo "Build: $BUILD"
-            echo "Usage: $0 [--lang=en|ru] [--serial=<serial>] [--version] [--help]"
+            echo "Usage: $0 [--lang=en|ru] [--serial=<serial>] [--strict-versions] [--version] [--help]"
             exit 0
             ;;
-        --lang=*)   FORCE_LANG="${arg#--lang=}" ;;
-        --serial=*) SERIAL="${arg#--serial=}" ;;
+        --lang=*)          FORCE_LANG="${arg#--lang=}" ;;
+        --serial=*)        SERIAL="${arg#--serial=}" ;;
+        --strict-versions) STRICT_VERSIONS="yes" ;;
     esac
 done
 
@@ -65,83 +71,237 @@ esac
 # ==============================================================================
 declare -A MSG_EN MSG_RU
 
-MSG_EN[Welcome]="Welcome to GSI Flash Tool"
+# --- EN ---
+MSG_EN[MainMenuTitle]="GSI Flash Tool"
 MSG_EN[LogFile]="Log"
-MSG_EN[FromAndroid]="Android  -> Fastbootd"
-MSG_EN[FromRecovery]="Recovery -> Fastbootd"
-MSG_EN[FromBootloader]="Bootloader -> Fastbootd"
-MSG_EN[AlreadyFb]="Already in Fastbootd"
+MSG_EN[MenuCheckDev]="Check devices (ADB / Fastboot)"
+MSG_EN[MenuFromAndroid]="Android  -> Fastbootd"
+MSG_EN[MenuFromRecovery]="Recovery -> Fastbootd"
+MSG_EN[MenuFromBoot]="Bootloader -> Fastbootd"
+MSG_EN[MenuAlreadyFb]="Already in Fastbootd"
 MSG_EN[ServiceMenu]="SERVICE MENU"
 MSG_EN[Exit]="Exit"
 MSG_EN[Input]="Input: "
+MSG_EN[Back]="Back"
+MSG_EN[ActiveSlotLine]="Active slot: %s  [A/B: %s]"
+
 MSG_EN[ActionUpdate]="Update system"
 MSG_EN[ActionReset]="Reset and flash (Full Wipe)"
 MSG_EN[ActionSlot]="Flash to specified slot (A/B)"
 MSG_EN[ActionSwitch]="Switch active slot"
 MSG_EN[ActionDirty]="Dirty flash"
-MSG_EN[Back]="Back"
+
+MSG_EN[Backing]="Backup /data via ADB stream"
+MSG_EN[FlashingGki]="Flash GKI kernels (boot + vendor_boot)"
+MSG_EN[EmergencyFix]="Emergency dual-slot restore"
+
 MSG_EN[CheckingBl]="Checking bootloader state..."
 MSG_EN[BlUnlocked]="Bootloader: UNLOCKED"
 MSG_EN[BlLocked]="CRITICAL: Bootloader is LOCKED!"
+MSG_EN[BlOemDisabled]="ERROR: OEM Unlock disabled in Android!"
+
 MSG_EN[WaitAdb]="Waiting for ADB device"
 MSG_EN[WaitFastboot]="Waiting for Fastboot device"
 MSG_EN[Timeout]="[TIMEOUT]"
 MSG_EN[Ok]="[OK]"
-MSG_EN[FoundImg]="Found system image"
-MSG_EN[ChooseImg]="Found multiple images. Choose one"
-MSG_EN[Cancel]="Cancelled."
-MSG_EN[InvalidChoice]="Invalid choice."
-MSG_EN[EnterSlot]="Enter slot (a/b): "
-MSG_EN[EnterConfirm]="Continue? (y/N): "
-MSG_EN[FlashOk]="Done."
-MSG_EN[RebuildSuper]="SUPER RECONSTRUCTION"
-MSG_EN[Backing]="Backup /data via ADB stream"
-MSG_EN[FlashingGki]="Flash GKI kernels (boot + vendor_boot)"
-MSG_EN[EmergencyFix]="Emergency dual-slot restore"
-MSG_EN[PressKey]="Press Enter to continue..."
+
 MSG_EN[Error]="ERROR"
 MSG_EN[Warning]="WARNING"
+MSG_EN[Cancel]="Cancelled."
+MSG_EN[InvalidChoice]="Invalid choice."
+MSG_EN[PressKey]="Press Enter to continue..."
+MSG_EN[EnterConfirm]="Continue? (y/N): "
+MSG_EN[EnterSlot]="Enter slot (a/b): "
+MSG_EN[FlashOk]="Done."
+
 MSG_EN[ToolCheck]="Tool version check"
 MSG_EN[ToolMissing]="not found"
+MSG_EN[VersionTooOld]="version too old (need >= %s)"
+MSG_EN[VersionUnknown]="version unknown"
+MSG_EN[ToolsWarn]="Some tools missing or too old. Basic operations may not work."
+MSG_EN[StrictFail]="Strict version check enabled: aborting on version problems."
 
-MSG_RU[Welcome]="Добро пожаловать в GSI Flash Tool"
+MSG_EN[FoundImg]="Found system image"
+MSG_EN[NoSystemImg]="No system images found."
+MSG_EN[ChooseImg]="Found multiple images. Choose one"
+MSG_EN[ImgSuspect1]="WARNING: one or more images are suspiciously small (<100 MB)."
+MSG_EN[ImgSuspect2]="         Typical GSI is 600 MB - 4 GB. File may be corrupted,"
+MSG_EN[ImgSuspect3]="         incomplete, or not a system image at all."
+MSG_EN[ContinueAnyway]="Continue anyway? (y/N): "
+
+MSG_EN[Unpacking]="Unpacking: %s -> %s"
+MSG_EN[UnpackFailed]="Unpack failed: %s"
+MSG_EN[UnpackProgress]="unpack"
+MSG_EN[Need7Zip]="Need 7-Zip for %s"
+
+MSG_EN[RebuildSuper]="SUPER RECONSTRUCTION"
+MSG_EN[RebootToFb]="Rebooting to Fastbootd..."
+MSG_EN[NotInFbReboot]="Not in Fastbootd, reboot needed"
+MSG_EN[TargetPart]="Target partition: %s"
+MSG_EN[NewSize]="New size: %s bytes"
+MSG_EN[NotTouching]="NOT touching: vendor / odm / vendor_dlkm / system_dlkm"
+MSG_EN[SuperBigWarn]="WARNING: partition > 4 GB. MTK overflow possible."
+MSG_EN[CreateFailed]="CRITICAL: create-logical-partition failed."
+MSG_EN[CreateFailed2]="super left without system/product/system_ext. DO NOT REBOOT."
+
+MSG_EN[ShaHeader]="SHA256 VERIFICATION:"
+MSG_EN[ShaFileFound]="[INFO] Found .sha256 file."
+MSG_EN[ShaPrompt]="Copy SHA256 hash from GitHub release and paste here (or Enter to skip)."
+MSG_EN[ShaPromptShort]="Hash"
+MSG_EN[ShaOk]="[SHA256] OK."
+MSG_EN[ShaSkipNoHash]="[SHA256] Hash not recognized. Skipping."
+MSG_EN[ShaSkipTooBig]="[SHA256] .sha256 too large. Skipping."
+MSG_EN[ShaSkipErr]="[SHA256] Hash calculation error. Skipping."
+MSG_EN[ShaSkipUser]="[SHA256] Check skipped by user."
+MSG_EN[ShaMismatch]="SHA256 mismatch! Real: %s"
+MSG_EN[ShaRiskPrompt]="Continue at your own risk? (y/N): "
+
+MSG_EN[VbMissing]="WARNING: vbmeta.img not found. Bootloop possible."
+MSG_EN[VbContinueNo]="Continue without vbmeta? (y/N): "
+MSG_EN[VbInUserspace]="WARNING: You are in Fastbootd. vbmeta is a physical partition."
+MSG_EN[VbFlashing]="Flashing vbmeta..."
+
+MSG_EN[NotAb]="Device is not A/B."
+MSG_EN[SetActiveWarn]="WARNING: you are in Fastbootd. set_active may not work on MTK."
+MSG_EN[SetActiveTry]="Try anyway? (y/N): "
+MSG_EN[CurrentSlotMsg]="Current slot: %s"
+MSG_EN[SetActiveFail]="ERROR: set_active failed. On MTK use bootloader, not fastbootd."
+
+MSG_EN[SelectBoot]="Select BOOT (kernel):"
+MSG_EN[SelectVendor]="Select VENDOR_BOOT:"
+MSG_EN[SelectStableBoot]="Stable BOOT image:"
+MSG_EN[SelectStableVb]="Stable VENDOR_BOOT image:"
+MSG_EN[FlashToSlot]="Flash to slot _%s? (y/N): "
+
+MSG_EN[BackupTitle]="BACKUP /DATA VIA ADB STREAM"
+MSG_EN[BackupWarning]="Ensure device is in recovery (e.g. OrangeFox) and /data is decrypted."
+MSG_EN[BackupCriticalWarn]="NOTE: /data backup does NOT include IMEI, Wi-Fi/BT MAC, or Widevine keys."
+MSG_EN[BackupCriticalHint]="      Those live in /persist, /nvram, /modemst*, /misc. Back them up separately from recovery."
+MSG_EN[BackupMountOk]="Mount check output written to log."
+MSG_EN[BackupMountAsk]="Is /data mounted and decrypted? (y/N): "
+MSG_EN[BackupNoExcl]="tar does not support --exclude, doing full backup"
+MSG_EN[BackupProgress]="Backup /data"
+MSG_EN[BackupDone]="Backup OK: %s"
+MSG_EN[BackupFailed]="Backup FAILED. See log:"
+MSG_EN[BackupNo7Zip]="Backup requires 7-Zip. Install 7-Zip 22.00+ and retry."
+
+MSG_EN[ExitCodeMsg]="Exit code: %s"
+
+# --- RU ---
+MSG_RU[MainMenuTitle]="GSI Flash Tool"
 MSG_RU[LogFile]="Лог"
-MSG_RU[FromAndroid]="Android  -> Fastbootd"
-MSG_RU[FromRecovery]="Recovery -> Fastbootd"
-MSG_RU[FromBootloader]="Bootloader -> Fastbootd"
-MSG_RU[AlreadyFb]="Уже в Fastbootd"
+MSG_RU[MenuCheckDev]="Проверить устройства (ADB / Fastboot)"
+MSG_RU[MenuFromAndroid]="Android  -> Fastbootd"
+MSG_RU[MenuFromRecovery]="Recovery -> Fastbootd"
+MSG_RU[MenuFromBoot]="Bootloader -> Fastbootd"
+MSG_RU[MenuAlreadyFb]="Уже в Fastbootd"
 MSG_RU[ServiceMenu]="СЕРВИСНОЕ МЕНЮ"
 MSG_RU[Exit]="Выход"
 MSG_RU[Input]="Ввод: "
+MSG_RU[Back]="Назад"
+MSG_RU[ActiveSlotLine]="Активный слот: %s  [A/B: %s]"
+
 MSG_RU[ActionUpdate]="Обновить систему"
 MSG_RU[ActionReset]="Сброс и прошивка (Full Wipe)"
 MSG_RU[ActionSlot]="Прошить в указанный слот (A/B)"
 MSG_RU[ActionSwitch]="Переключить активный слот"
 MSG_RU[ActionDirty]="Грязная прошивка"
-MSG_RU[Back]="Назад"
+
+MSG_RU[Backing]="Бэкап /data через ADB-стрим"
+MSG_RU[FlashingGki]="Прошивка GKI-ядер (boot + vendor_boot)"
+MSG_RU[EmergencyFix]="Экстренный откат (оба слота)"
+
 MSG_RU[CheckingBl]="Проверка загрузчика..."
 MSG_RU[BlUnlocked]="Загрузчик: РАЗБЛОКИРОВАН"
 MSG_RU[BlLocked]="КРИТИЧЕСКАЯ ОШИБКА: Загрузчик заблокирован!"
+MSG_RU[BlOemDisabled]="ОШИБКА: в Android выключен OEM Unlock!"
+
 MSG_RU[WaitAdb]="Ожидание ADB-устройства"
 MSG_RU[WaitFastboot]="Ожидание Fastboot-устройства"
 MSG_RU[Timeout]="[ТАЙМ-АУТ]"
 MSG_RU[Ok]="[OK]"
-MSG_RU[FoundImg]="Найден образ системы"
-MSG_RU[ChooseImg]="Найдено несколько образов. Выберите"
-MSG_RU[Cancel]="Отменено."
-MSG_RU[InvalidChoice]="Неверный ввод."
-MSG_RU[EnterSlot]="Слот (a/b): "
-MSG_RU[EnterConfirm]="Выполнить? (y/N): "
-MSG_RU[FlashOk]="Готово."
-MSG_RU[RebuildSuper]="РЕКОНСТРУКЦИЯ SUPER"
-MSG_RU[Backing]="Бэкап /data через ADB-стрим"
-MSG_RU[FlashingGki]="Прошивка GKI-ядер (boot + vendor_boot)"
-MSG_RU[EmergencyFix]="Экстренный откат (оба слота)"
-MSG_RU[PressKey]="Нажмите Enter для продолжения..."
+
 MSG_RU[Error]="ОШИБКА"
 MSG_RU[Warning]="ВНИМАНИЕ"
+MSG_RU[Cancel]="Отменено."
+MSG_RU[InvalidChoice]="Неверный ввод."
+MSG_RU[PressKey]="Нажмите Enter для продолжения..."
+MSG_RU[EnterConfirm]="Выполнить? (y/N): "
+MSG_RU[EnterSlot]="Слот (a/b): "
+MSG_RU[FlashOk]="Готово."
+
 MSG_RU[ToolCheck]="Проверка версий утилит"
 MSG_RU[ToolMissing]="не найден"
+MSG_RU[VersionTooOld]="версия устарела (нужно >= %s)"
+MSG_RU[VersionUnknown]="версия не определена"
+MSG_RU[ToolsWarn]="Часть утилит отсутствует или устарела. Базовые операции могут не работать."
+MSG_RU[StrictFail]="Включён строгий режим проверки: отказ из-за проблем с версиями."
+
+MSG_RU[FoundImg]="Найден образ системы"
+MSG_RU[NoSystemImg]="Образы системы не найдены."
+MSG_RU[ChooseImg]="Найдено несколько образов. Выберите"
+MSG_RU[ImgSuspect1]="ВНИМАНИЕ: один или несколько образов подозрительно малы (<100 МБ)."
+MSG_RU[ImgSuspect2]="         Типичный GSI весит 600 МБ - 4 ГБ. Файл может быть повреждён,"
+MSG_RU[ImgSuspect3]="         недокачан, или это вовсе не образ системы."
+MSG_RU[ContinueAnyway]="Всё равно продолжить? (y/N): "
+
+MSG_RU[Unpacking]="Распаковка: %s -> %s"
+MSG_RU[UnpackFailed]="Ошибка распаковки: %s"
+MSG_RU[UnpackProgress]="распаковка"
+MSG_RU[Need7Zip]="Для %s нужен 7-Zip"
+
+MSG_RU[RebuildSuper]="РЕКОНСТРУКЦИЯ SUPER"
+MSG_RU[RebootToFb]="Перезагрузка в Fastbootd..."
+MSG_RU[NotInFbReboot]="Не в Fastbootd, нужна перезагрузка"
+MSG_RU[TargetPart]="Целевой раздел: %s"
+MSG_RU[NewSize]="Новый размер: %s байт"
+MSG_RU[NotTouching]="НЕ трогаем: vendor / odm / vendor_dlkm / system_dlkm"
+MSG_RU[SuperBigWarn]="ВНИМАНИЕ: раздел > 4 ГБ. Возможно переполнение на MTK."
+MSG_RU[CreateFailed]="КРИТИЧНО: create-logical-partition не удалось."
+MSG_RU[CreateFailed2]="super остался без system/product/system_ext. НЕ ПЕРЕЗАГРУЖАЙТЕ."
+
+MSG_RU[ShaHeader]="ПРОВЕРКА SHA256:"
+MSG_RU[ShaFileFound]="[INFO] Найден файл .sha256."
+MSG_RU[ShaPrompt]="Скопируйте SHA256 из GitHub-релиза и вставьте сюда (или Enter — пропустить)."
+MSG_RU[ShaPromptShort]="Hash"
+MSG_RU[ShaOk]="[SHA256] OK."
+MSG_RU[ShaSkipNoHash]="[SHA256] Хеш не распознан. Пропуск."
+MSG_RU[ShaSkipTooBig]="[SHA256] Файл .sha256 слишком большой. Пропуск."
+MSG_RU[ShaSkipErr]="[SHA256] Ошибка вычисления хеша. Пропуск."
+MSG_RU[ShaSkipUser]="[SHA256] Проверка пропущена пользователем."
+MSG_RU[ShaMismatch]="Несовпадение SHA256! Реальный: %s"
+MSG_RU[ShaRiskPrompt]="Продолжить на свой риск? (y/N): "
+
+MSG_RU[VbMissing]="ВНИМАНИЕ: vbmeta.img не найден. Возможен bootloop."
+MSG_RU[VbContinueNo]="Продолжить без vbmeta? (y/N): "
+MSG_RU[VbInUserspace]="ВНИМАНИЕ: вы в Fastbootd. vbmeta — физический раздел."
+MSG_RU[VbFlashing]="Прошивка vbmeta..."
+
+MSG_RU[NotAb]="Устройство не A/B."
+MSG_RU[SetActiveWarn]="ВНИМАНИЕ: вы в Fastbootd. set_active может не работать на MTK."
+MSG_RU[SetActiveTry]="Всё равно попробовать? (y/N): "
+MSG_RU[CurrentSlotMsg]="Текущий слот: %s"
+MSG_RU[SetActiveFail]="ОШИБКА: set_active не удалось. На MTK используйте bootloader, не fastbootd."
+
+MSG_RU[SelectBoot]="Выберите BOOT (ядро):"
+MSG_RU[SelectVendor]="Выберите VENDOR_BOOT:"
+MSG_RU[SelectStableBoot]="Стабильный BOOT-образ:"
+MSG_RU[SelectStableVb]="Стабильный VENDOR_BOOT-образ:"
+MSG_RU[FlashToSlot]="Прошить в слот _%s? (y/N): "
+
+MSG_RU[BackupTitle]="БЭКАП /DATA ЧЕРЕЗ ADB-СТРИМ"
+MSG_RU[BackupWarning]="Убедитесь, что телефон в recovery (например, OrangeFox) и /data расшифрована."
+MSG_RU[BackupCriticalWarn]="ВНИМАНИЕ: бэкап /data НЕ включает IMEI, MAC Wi-Fi/Bluetooth и ключи Widevine."
+MSG_RU[BackupCriticalHint]="         Они лежат в /persist, /nvram, /modemst*, /misc. Бэкапьте их отдельно из recovery."
+MSG_RU[BackupMountOk]="Вывод проверки mount записан в лог."
+MSG_RU[BackupMountAsk]="/data смонтирована и расшифрована? (y/N): "
+MSG_RU[BackupNoExcl]="tar не поддерживает --exclude, делаем полный бэкап"
+MSG_RU[BackupProgress]="Бэкап /data"
+MSG_RU[BackupDone]="Бэкап готов: %s"
+MSG_RU[BackupFailed]="Бэкап НЕ УДАЛСЯ. См. лог:"
+MSG_RU[BackupNo7Zip]="Для бэкапа нужен 7-Zip. Установите 7-Zip 22.00+ и повторите."
+
+MSG_RU[ExitCodeMsg]="Код выхода: %s"
 
 if [ -n "$FORCE_LANG" ]; then
     LANG_CODE="$FORCE_LANG"
@@ -158,28 +318,40 @@ t() {
     fi
 }
 
+tf() {
+    local key="$1"; shift
+    local fmt
+    fmt="$(t "$key")"
+    # shellcheck disable=SC2059
+    printf "$fmt" "$@"
+}
+
 # ==============================================================================
-# Logging
-# All log output goes to stderr — keeps stdout clean for function return values.
+# Logging — stderr for live output, file for archive
 # ==============================================================================
 LOG_DIR="logs"; mkdir -p "$LOG_DIR"
 LOG="$LOG_DIR/gsi-tool_${TOOL_VERSION}_$(date +%Y%m%d_%H%M%S).log"
-echo "=== SESSION START $(date) ===" >> "$LOG"
-echo "Version: $TOOL_VERSION" >> "$LOG"
-echo "Build:   $BUILD" >> "$LOG"
-echo "Arch: $ARCH" >> "$LOG"
-echo "Lang: $LANG_CODE (LANG=${LANG:-unset})" >> "$LOG"
-echo "PWD: $PWD" >> "$LOG"
+{
+    echo "=== SESSION START $(date) ==="
+    echo "Version: $TOOL_VERSION"
+    echo "Build:   $BUILD"
+    echo "Arch: $ARCH"
+    echo "Lang: $LANG_CODE (LANG=${LANG:-unset})"
+    echo "StrictVersions: $STRICT_VERSIONS"
+    echo "Serial: ${SERIAL:-(auto)}"
+    echo "PWD: $PWD"
+} >> "$LOG"
 
 log()      { local l="[$(date '+%H:%M:%S')] [INFO]  $*"; echo "$l" >&2; echo "$l" >> "$LOG"; }
 log_warn() { local l="[$(date '+%H:%M:%S')] [WARN]  $*"; echo "$l" >&2; echo "$l" >> "$LOG"; }
 log_err()  { local l="[$(date '+%H:%M:%S')] [ERROR] $*"; echo "$l" >&2; echo "$l" >> "$LOG"; }
 log_raw()  { [ -n "$1" ] && echo "$1" >> "$LOG"; }
 
-pause() { read -rp "$(t PressKey)"; }
+pause() { read -rp "$(t PressKey)" _; }
 
 confirm() {
     local prompt="${1:-$(t EnterConfirm)}"
+    local r
     read -rp "$prompt " r
     local res=0
     [[ "$r" =~ ^[Yy]$ ]] && res=1
@@ -188,37 +360,145 @@ confirm() {
 }
 
 # ==============================================================================
+# Version compare helper: version_ge A B → 0 if A >= B
+# ==============================================================================
+version_ge() {
+    local a="$1" b="$2"
+    while [ "$(printf '%s' "$a" | tr -cd '.' | wc -c)" -lt 2 ]; do a="${a}.0"; done
+    while [ "$(printf '%s' "$b" | tr -cd '.' | wc -c)" -lt 2 ]; do b="${b}.0"; done
+    local first
+    first=$(printf '%s\n%s\n' "$a" "$b" | sort -V | head -n1)
+    [ "$first" = "$b" ]
+}
+
+# ==============================================================================
+# Decompression with pv progress
+#   $1 source file, $2 output file, $3.. decompressor command (reads $1, writes stdout)
+# ==============================================================================
+decompress_with_progress() {
+    local src="$1" out="$2"; shift 2
+    local total rc
+    total=$(stat -c%s "$src" 2>/dev/null || echo 0)
+    if command -v pv >/dev/null 2>&1 && [ -t 2 ]; then
+        set -o pipefail
+        "$@" "$src" | pv -s "$total" -N "$(t UnpackProgress)" > "$out"
+        rc=$?
+        set +o pipefail
+    else
+        "$@" "$src" > "$out"
+        rc=$?
+    fi
+    if [ "$rc" -ne 0 ]; then
+        rm -f "$out"
+        return "$rc"
+    fi
+    return 0
+}
+
+# ==============================================================================
 # Tool version check
 # ==============================================================================
 check_tool_versions() {
     echo "$(t ToolCheck)" >&2
-    log "Tool version check"
+    log "Tool version check (strict=$STRICT_VERSIONS)"
     local problems=0
 
+    # --- adb ---
     if ! command -v adb >/dev/null 2>&1; then
-        echo "  adb      : $(t ToolMissing)" >&2; log_err "adb not found"; problems=$((problems+1))
+        echo "  adb      : $(t ToolMissing)" >&2
+        log_err "adb not found"
+        problems=$((problems+1))
     else
-        local adb_v=$(adb --version 2>/dev/null | grep -oE 'Version [0-9]+\.[0-9]+\.[0-9]+' | head -1 | awk '{print $2}')
-        echo "  adb      : ${adb_v:-?}  ($(command -v adb))" >&2
-        log "adb: ${adb_v:-?}"
+        local adb_v
+        adb_v=$(adb --version 2>/dev/null | grep -oE 'Version [0-9]+\.[0-9]+\.[0-9]+' | head -1 | awk '{print $2}')
+        if [ -z "$adb_v" ]; then
+            echo "  adb      : $(t VersionUnknown)  ($(command -v adb))" >&2
+            log_warn "adb version unknown"
+            problems=$((problems+1))
+        elif ! version_ge "$adb_v" "33.0.0"; then
+            echo "  adb      : $adb_v  $(tf VersionTooOld 33.0.0)" >&2
+            log_warn "adb version too old: $adb_v (need >= 33.0.0)"
+            problems=$((problems+1))
+        else
+            echo "  adb      : $adb_v  ($(command -v adb))" >&2
+            log "adb: $adb_v"
+        fi
     fi
 
+    # --- fastboot ---
     if ! command -v fastboot >/dev/null 2>&1; then
-        echo "  fastboot : $(t ToolMissing)" >&2; log_err "fastboot not found"; problems=$((problems+1))
+        echo "  fastboot : $(t ToolMissing)" >&2
+        log_err "fastboot not found"
+        problems=$((problems+1))
     else
-        local fb_v=$(fastboot --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
-        echo "  fastboot : ${fb_v:-?}  ($(command -v fastboot))" >&2
-        log "fastboot: ${fb_v:-?}"
+        local fb_v
+        fb_v=$(fastboot --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+        if [ -z "$fb_v" ]; then
+            echo "  fastboot : $(t VersionUnknown)  ($(command -v fastboot))" >&2
+            log_warn "fastboot version unknown"
+            problems=$((problems+1))
+        elif ! version_ge "$fb_v" "33.0.0"; then
+            echo "  fastboot : $fb_v  $(tf VersionTooOld 33.0.0)" >&2
+            log_warn "fastboot version too old: $fb_v (need >= 33.0.0)"
+            problems=$((problems+1))
+        else
+            echo "  fastboot : $fb_v  ($(command -v fastboot))" >&2
+            log "fastboot: $fb_v"
+        fi
     fi
 
+    # --- 7-Zip (optional on Linux) ---
+    if command -v 7z >/dev/null 2>&1; then
+        local sz_v
+        sz_v=$(7z 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+' | head -1)
+        if [ -z "$sz_v" ]; then
+            echo "  7-Zip    : $(t VersionUnknown)" >&2
+            log_warn "7-Zip version unknown"
+            problems=$((problems+1))
+        elif ! version_ge "$sz_v" "22.00"; then
+            echo "  7-Zip    : $sz_v  $(tf VersionTooOld 22.00)" >&2
+            log_warn "7-Zip version too old: $sz_v (need >= 22.00)"
+            problems=$((problems+1))
+        else
+            echo "  7-Zip    : $sz_v  ($(command -v 7z))" >&2
+            log "7-Zip: $sz_v"
+        fi
+    else
+        echo "  7-Zip    : $(t ToolMissing)  (not required on Linux)" >&2
+        log "7-Zip not found (not required on Linux)"
+    fi
+
+    # --- zstd ---
+    if command -v zstd >/dev/null 2>&1; then
+        local z_v
+        z_v=$(zstd --version 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 | tr -d 'v')
+        if [ -z "$z_v" ]; then
+            echo "  zstd     : $(t VersionUnknown)  ($(command -v zstd))" >&2
+            log_warn "zstd version unknown"
+            problems=$((problems+1))
+        elif ! version_ge "$z_v" "1.0"; then
+            echo "  zstd     : $z_v  $(tf VersionTooOld 1.0)" >&2
+            log_warn "zstd version too old: $z_v (need >= 1.0)"
+            problems=$((problems+1))
+        else
+            echo "  zstd     : $z_v  ($(command -v zstd))" >&2
+            log "zstd: $z_v"
+        fi
+    fi
+
+    # --- required POSIX helpers ---
     if ! command -v timeout >/dev/null 2>&1; then
-        echo "  timeout  : $(t ToolMissing)" >&2; log_err "timeout not found"; problems=$((problems+1))
+        echo "  timeout  : $(t ToolMissing)" >&2
+        log_err "timeout not found"
+        problems=$((problems+1))
     fi
     if ! command -v od >/dev/null 2>&1; then
-        echo "  od       : $(t ToolMissing)" >&2; log_err "od not found"; problems=$((problems+1))
+        echo "  od       : $(t ToolMissing)" >&2
+        log_err "od not found"
+        problems=$((problems+1))
     fi
 
-    return $problems
+    return "$problems"
 }
 
 # ==============================================================================
@@ -230,17 +510,19 @@ wait_for_adb() {
     while [ $c -lt $tmo ]; do
         local devs
         if [ -n "$SERIAL" ]; then
-            devs=$(adb -s "$SERIAL" devices 2>/dev/null | tail -n +2 | grep -E '\s(device|recovery)$' || true)
+            devs=$(adb -s "$SERIAL" devices 2>/dev/null | tail -n +2 | tr -d '\r' | grep -E '\s(device|recovery)$' || true)
         else
-            devs=$(adb devices 2>/dev/null | tail -n +2 | grep -E '\s(device|recovery)$' || true)
+            devs=$(adb devices 2>/dev/null | tail -n +2 | tr -d '\r' | grep -E '\s(device|recovery)$' || true)
         fi
         if [ -n "$devs" ]; then
-            echo " $(t Ok)" >&2; log "ADB found: $(echo "$devs" | awk '{print $1}' | tr '\n' ',')"
+            echo " $(t Ok)" >&2
+            log "ADB found: $(echo "$devs" | awk '{print $1}' | tr '\n' ',')"
             return 0
         fi
         echo -n "." >&2; sleep 1; c=$((c+1))
     done
-    echo " $(t Timeout)" >&2; log_err "Wait-Adb TIMEOUT ($tmo s)"
+    echo " $(t Timeout)" >&2
+    log_err "Wait-Adb TIMEOUT ($tmo s)"
     return 1
 }
 
@@ -250,17 +532,19 @@ wait_for_fastboot() {
     while [ $c -lt $tmo ]; do
         local devs
         if [ -n "$SERIAL" ]; then
-            devs=$(fastboot -s "$SERIAL" devices 2>/dev/null | grep 'fastboot$' || true)
+            devs=$(fastboot -s "$SERIAL" devices 2>/dev/null | tr -d '\r' | grep 'fastboot$' || true)
         else
-            devs=$(fastboot devices 2>/dev/null | grep 'fastboot$' || true)
+            devs=$(fastboot devices 2>/dev/null | tr -d '\r' | grep 'fastboot$' || true)
         fi
         if [ -n "$devs" ]; then
-            echo " $(t Ok)" >&2; log "Fastboot found: $(echo "$devs" | awk '{print $1}' | tr '\n' ',')"
+            echo " $(t Ok)" >&2
+            log "Fastboot found: $(echo "$devs" | awk '{print $1}' | tr '\n' ',')"
             return 0
         fi
         echo -n "." >&2; sleep 1; c=$((c+1))
     done
-    echo " $(t Timeout)" >&2; log_err "Wait-Fastboot TIMEOUT ($tmo s)"
+    echo " $(t Timeout)" >&2
+    log_err "Wait-Fastboot TIMEOUT ($tmo s)"
     return 1
 }
 
@@ -273,11 +557,25 @@ fb() {
     args+=("$@")
     log "fastboot ${*}"
     local out
-    out=$(timeout $REBOOT_TIMEOUT fastboot "${args[@]}" 2>&1)
+    out=$(timeout "$REBOOT_TIMEOUT" fastboot "${args[@]}" 2>&1)
     local rc=$?
     [ -n "$out" ] && log_raw "  fb: $out"
     if [ $rc -eq 124 ]; then log_err "fastboot TIMEOUT after ${REBOOT_TIMEOUT}s"; return 1; fi
     if [ $rc -ne 0 ]; then log_warn "fastboot exit: $rc"; return 1; fi
+    return 0
+}
+
+fb_tolerant() {
+    local args=()
+    [ -n "$SERIAL" ] && args+=("-s" "$SERIAL")
+    args+=("$@")
+    log "fastboot (tolerant) ${*}"
+    local out
+    out=$(timeout "$REBOOT_TIMEOUT" fastboot "${args[@]}" 2>&1)
+    local rc=$?
+    [ -n "$out" ] && log_raw "  fb: $out"
+    if [ $rc -eq 124 ]; then log_err "fastboot TIMEOUT after ${REBOOT_TIMEOUT}s"; return 1; fi
+    log "fastboot (tolerant) exit=$rc (ignored)"
     return 0
 }
 
@@ -295,7 +593,24 @@ adb_() {
 }
 
 fb_flash() {
-    if ! fb "$@"; then
+    local args=()
+    [ -n "$SERIAL" ] && args+=("-s" "$SERIAL")
+    args+=("$@")
+    log "fastboot (flash) ${*}"
+    local out
+    out=$(timeout "$FLASH_TIMEOUT" fastboot "${args[@]}" 2>&1)
+    local rc=$?
+    [ -n "$out" ] && log_raw "  fb: $out"
+    if [ $rc -eq 124 ]; then
+        log_err "fb_flash TIMEOUT after ${FLASH_TIMEOUT}s"
+        echo "========================================================" >&2
+        echo "$(t Error): fastboot $* -- TIMEOUT" >&2
+        echo "See log: $LOG" >&2
+        echo "DO NOT REBOOT the device." >&2
+        echo "========================================================" >&2
+        return 1
+    fi
+    if [ $rc -ne 0 ]; then
         log_err "fb_flash FAILED: fastboot $*"
         echo "========================================================" >&2
         echo "$(t Error): fastboot $* -- FAILED" >&2
@@ -319,43 +634,53 @@ fb_getvar() {
     else
         raw=$(fastboot getvar "$name" 2>&1)
     fi
-    [[ "$raw" =~ $name:[[:space:]]*([^[:space:]]+) ]] && echo "${BASH_REMATCH[1]}" | tr -d '\r'
+    if [[ "$raw" =~ $name:[[:space:]]*([^[:space:]]+) ]]; then
+        echo "${BASH_REMATCH[1]}" | tr -d '\r'
+    fi
 }
 
 get_current_slot() {
-    local v=$(fb_getvar current-slot)
+    local v
+    v=$(fb_getvar current-slot)
     log "current-slot = $v"
-    [[ "$v" =~ ^[ab] ]] && echo "${v:0:1}" && return
+    if [[ "$v" =~ ^[ab] ]]; then echo "${v:0:1}"; return; fi
     log_warn "current-slot not detected, fallback 'a'"
     echo "a"
 }
 
 get_slot_count() {
-    local v=$(fb_getvar slot-count)
+    local v
+    v=$(fb_getvar slot-count)
     log "slot-count = $v"
     echo "${v:-2}"
 }
 
 is_userspace() {
-    local v=$(fb_getvar is-userspace)
+    local v
+    v=$(fb_getvar is-userspace)
     log "is-userspace = $v"
     [ "$v" = "yes" ]
 }
 
 check_bootloader_unlocked() {
     echo "$(t CheckingBl)" >&2
-    local u=$(fb_getvar unlocked)
-    local s=$(fb_getvar secure)
-    local a=$(fb_getvar get_unlock_ability)
+    local u s a
+    u=$(fb_getvar unlocked)
+    s=$(fb_getvar secure)
+    a=$(fb_getvar get_unlock_ability)
     log "Bootloader: unlocked=$u secure=$s get_unlock_ability=$a"
     if [ "$u" = "yes" ] || [ "$s" = "no" ]; then
-        echo "  $(t BlUnlocked)" >&2; log "Bootloader UNLOCKED"; return 0
+        echo "  $(t BlUnlocked)" >&2
+        log "Bootloader UNLOCKED"
+        return 0
     fi
     if [ "$a" = "0" ]; then
-        echo "  ERROR: OEM Unlock disabled in Android!" >&2
-        log_err "OEM Unlock disabled"; return 1
+        echo "  $(t BlOemDisabled)" >&2
+        log_err "OEM Unlock disabled"
+        return 1
     fi
-    echo "  $(t BlLocked)" >&2; log_err "Bootloader LOCKED"
+    echo "  $(t BlLocked)" >&2
+    log_err "Bootloader LOCKED"
     return 1
 }
 
@@ -416,10 +741,11 @@ verify_sha256() {
     if [ -n "$hash_arg" ] && [[ "$hash_arg" =~ ([a-fA-F0-9]{64}) ]]; then
         want=$(echo "${BASH_REMATCH[1]}" | tr 'A-F' 'a-f')
     elif [ -f "${path}.sha256" ]; then
-        local sz=$(stat -c%s "${path}.sha256")
+        local sz
+        sz=$(stat -c%s "${path}.sha256")
         if [ "$sz" -gt 4096 ]; then log_warn ".sha256 too large"; echo error_file_too_large; return; fi
         local content
-        content=$(cat "${path}.sha256" 2>/dev/null | tr -d '\r\n ')
+        content=$(tr -d '\r\n ' < "${path}.sha256" 2>/dev/null)
         if [[ "$content" =~ ([a-fA-F0-9]{64}) ]]; then
             want=$(echo "${BASH_REMATCH[1]}" | tr 'A-F' 'a-f')
         fi
@@ -431,8 +757,12 @@ verify_sha256() {
         got=$(sha256sum "$path" | awk '{print $1}')
     fi
     got=$(echo "$got" | tr 'A-F' 'a-f')
-    if [ "$got" = "$want" ]; then log "SHA256 OK ($got)"; echo ok
-    else log_err "SHA256 mismatch: want=$want got=$got"; echo "mismatch:$got"; fi
+    if [ "$got" = "$want" ]; then
+        log "SHA256 OK ($got)"; echo ok
+    else
+        log_err "SHA256 mismatch: want=$want got=$got"
+        echo "mismatch:$got"
+    fi
 }
 
 # ==============================================================================
@@ -442,13 +772,9 @@ interactive_file_select() {
     local mask="$1"
     local prompt="$2"
     local old; old=$(shopt -p nullglob 2>/dev/null)
-    shopt -u nullglob
+    shopt -s nullglob
     local files=($mask)
-    if [ ! -e "${files[0]}" ]; then
-        echo "Files by mask [$mask] not found!" >&2
-        log_warn "Files by mask [$mask] not found"
-        eval "$old"; return 1
-    fi
+    [ ${#files[@]} -eq 0 ] && { eval "$old"; return 1; }
     if [ ${#files[@]} -eq 1 ]; then
         SELECTED_FILE="${files[0]}"
         log "Auto-selected: $SELECTED_FILE"
@@ -472,7 +798,7 @@ interactive_file_select() {
 }
 
 # ==============================================================================
-# Select system image — returns path via stdout, all UI on stderr
+# Select system image
 # ==============================================================================
 select_system_image() {
     local all=()
@@ -488,13 +814,17 @@ select_system_image() {
     done
     log "Select-SystemImage: found ${#sys[@]} candidate(s)"
     for f in "${sys[@]}"; do log "  candidate: $f"; done
-    if [ ${#sys[@]} -eq 0 ]; then log_warn "No system images found"; echo "No system images found." >&2; return 1; fi
+    if [ ${#sys[@]} -eq 0 ]; then
+        log_warn "No system images found"
+        echo "$(t NoSystemImg)" >&2
+        return 1
+    fi
 
-    # Size check — GSI normally weighs 600 MB - 4 GB
     local size_warn=0
     for f in "${sys[@]}"; do
-        local fsz=$(stat -c%s "$f" 2>/dev/null || echo 0)
-        local fmb=$((fsz / 1024 / 1024))
+        local fsz fmb
+        fsz=$(stat -c%s "$f" 2>/dev/null || echo 0)
+        fmb=$((fsz / 1024 / 1024))
         if [ "$fmb" -lt 100 ]; then
             log_warn "Suspicious small image: $f ($fmb MB) — not a valid GSI?"
             size_warn=1
@@ -503,10 +833,10 @@ select_system_image() {
         fi
     done
     if [ $size_warn -eq 1 ]; then
-        echo "WARNING: one or more images are suspiciously small (<100 MB)." >&2
-        echo "         Typical GSI is 600 MB - 4 GB. File may be corrupted," >&2
-        echo "         incomplete, or not a system image at all." >&2
-        confirm "Continue anyway? (y/N): " || { log "Aborted due to size check"; return 1; }
+        echo "$(t ImgSuspect1)" >&2
+        echo "$(t ImgSuspect2)" >&2
+        echo "$(t ImgSuspect3)" >&2
+        confirm "$(t ContinueAnyway)" || { log "Aborted due to size check"; return 1; }
     fi
 
     if [ ${#sys[@]} -eq 1 ]; then
@@ -517,8 +847,9 @@ select_system_image() {
     echo "$(t ChooseImg)" >&2
     local i=1
     for f in "${sys[@]}"; do
-        local fsz=$(stat -c%s "$f" 2>/dev/null || echo 0)
-        local fmb=$((fsz / 1024 / 1024))
+        local fsz fmb
+        fsz=$(stat -c%s "$f" 2>/dev/null || echo 0)
+        fmb=$((fsz / 1024 / 1024))
         local mark=" [${fmb} MB]"
         [ "$fmb" -lt 100 ] && mark=" [${fmb} MB] SUSPICIOUS"
         [ "$fmb" -ge 100 ] && [ "$fmb" -lt 300 ] && mark=" [${fmb} MB] small"
@@ -537,29 +868,62 @@ select_system_image() {
     done
 }
 
+# ==============================================================================
+# Resolve system image (decompress .xz/.gz/.zst) with pv progress
+# ==============================================================================
 resolve_system_image() {
     local img="$1"
+    local out
     case "$img" in
         *.img.xz)
-            command -v unxz >/dev/null || { log_err "unxz not found"; return 1; }
-            local out="${img%.xz}"
+            if ! command -v unxz >/dev/null 2>&1; then
+                log_err "unxz not found"
+                tf Need7Zip ".xz (unxz)" >&2
+                return 1
+            fi
+            out="${img%.xz}"
             if [ ! -f "$out" ]; then
                 log "Unpacking .xz: $img -> $out"
-                timeout $UNPACK_TIMEOUT unxz -k -T0 "$img" || { log_err "unxz failed"; return 1; }
+                tf Unpacking "$img" "$out" >&2
+                if ! timeout "$UNPACK_TIMEOUT" bash -c "$(declare -f decompress_with_progress); decompress_with_progress \"\$1\" \"\$2\" unxz -T0 -c" _ "$img" "$out"; then
+                    log_err "unxz failed"
+                    tf UnpackFailed ".xz" >&2
+                    return 1
+                fi
             fi
             echo "$out" ;;
         *.img.gz)
-            command -v gunzip >/dev/null || { log_err "gunzip not found"; return 1; }
-            local out="${img%.gz}"
+            if ! command -v gunzip >/dev/null 2>&1; then
+                log_err "gunzip not found"
+                tf Need7Zip ".gz (gunzip)" >&2
+                return 1
+            fi
+            out="${img%.gz}"
             if [ ! -f "$out" ]; then
-                timeout $UNPACK_TIMEOUT gunzip -k "$img" || { log_err "gunzip failed"; return 1; }
+                log "Unpacking .gz: $img -> $out"
+                tf Unpacking "$img" "$out" >&2
+                if ! timeout "$UNPACK_TIMEOUT" bash -c "$(declare -f decompress_with_progress); decompress_with_progress \"\$1\" \"\$2\" gunzip -c" _ "$img" "$out"; then
+                    log_err "gunzip failed"
+                    tf UnpackFailed ".gz" >&2
+                    return 1
+                fi
             fi
             echo "$out" ;;
         *.img.zst)
-            command -v zstd >/dev/null || { log_err "zstd not found"; return 1; }
-            local out="${img%.zst}"
+            if ! command -v zstd >/dev/null 2>&1; then
+                log_err "zstd not found"
+                tf Need7Zip ".zst (zstd)" >&2
+                return 1
+            fi
+            out="${img%.zst}"
             if [ ! -f "$out" ]; then
-                timeout $UNPACK_TIMEOUT zstd -d -k "$img" || { log_err "zstd failed"; return 1; }
+                log "Unpacking .zst: $img -> $out"
+                tf Unpacking "$img" "$out" >&2
+                if ! timeout "$UNPACK_TIMEOUT" bash -c "$(declare -f decompress_with_progress); decompress_with_progress \"\$1\" \"\$2\" zstd -d -c" _ "$img" "$out"; then
+                    log_err "zstd failed"
+                    tf UnpackFailed ".zst" >&2
+                    return 1
+                fi
             fi
             echo "$out" ;;
         *) echo "$img" ;;
@@ -572,16 +936,17 @@ resolve_system_image() {
 confirm_vbmeta() {
     if [ ! -f "vbmeta.img" ]; then
         log_warn "vbmeta.img not found"
-        echo "WARNING: vbmeta.img not found. Bootloop possible." >&2
-        confirm "Continue without vbmeta? (y/N): "; return $?
+        echo "$(t VbMissing)" >&2
+        confirm "$(t VbContinueNo)"; return $?
     fi
     if is_userspace; then
         log_warn "in fastbootd, vbmeta is physical"
-        echo "WARNING: you are in Fastbootd. vbmeta flash may not work." >&2
+        echo "$(t VbInUserspace)" >&2
     fi
     log "Flashing vbmeta"
+    echo "$(t VbFlashing)" >&2
     if ! fb_flash --disable-verity --disable-verification flash vbmeta vbmeta.img; then
-        confirm "Continue without vbmeta? (y/N): "; return $?
+        confirm "$(t VbContinueNo)"; return $?
     fi
     log "vbmeta flashed OK"; return 0
 }
@@ -594,71 +959,72 @@ free_super_space() {
     log "=== free_super_space slot=$slot ==="
     [ -n "$SYSTEM_IMG" ] && [ -f "$SYSTEM_IMG" ] || { log_err "SYSTEM_IMG not set"; return 1; }
 
-    local integrity=$(test_sparse_integrity "$SYSTEM_IMG")
+    local integrity
+    integrity=$(test_sparse_integrity "$SYSTEM_IMG")
     log "Sparse integrity: $integrity"
     if [[ "$integrity" =~ ^suspect: ]]; then
         echo "Sparse image looks suspicious: $integrity" >&2
-        confirm "Continue anyway? (y/N): " || return 1
+        confirm "$(t ContinueAnyway)" || return 1
     fi
 
-    local raw=$(get_image_size "$SYSTEM_IMG")
+    local raw part
+    raw=$(get_image_size "$SYSTEM_IMG")
     [ "$raw" -le 0 ] && { log_err "Cannot detect image size"; return 1; }
-    local part=$(calc_partition_size "$raw")
+    part=$(calc_partition_size "$raw")
     log "raw=$raw part=$part (margin=${MARGIN_MB}MB)"
     echo "raw=$raw, part=$part (margin=${MARGIN_MB}MB)" >&2
 
     echo "--------------------------------------------------------" >&2
-    echo "SHA256 VERIFICATION:" >&2
+    echo "$(t ShaHeader)" >&2
     local user_hash=""
     if [ -f "${SYSTEM_IMG}.sha256" ]; then
-        echo "[INFO] Found .sha256 file." >&2
+        echo "$(t ShaFileFound)" >&2
         log "Found .sha256 file"
         user_hash="file"
     else
-        echo "Copy SHA256 hash from GitHub release and paste here (or Enter to skip)." >&2
-        read -rp "Hash: " user_hash
+        echo "$(t ShaPrompt)" >&2
+        read -rp "$(t ShaPromptShort): " user_hash
         log "SHA256 input: $( [ -n "$user_hash" ] && echo provided || echo skipped )"
     fi
     if [ -n "$user_hash" ]; then
-        local res=$(verify_sha256 "$SYSTEM_IMG" "$user_hash")
+        local res
+        res=$(verify_sha256 "$SYSTEM_IMG" "$user_hash")
         case "$res" in
             mismatch:*)
                 log_err "SHA256 mismatch: $res"
-                echo "ERROR: SHA256 mismatch! Real: $res" >&2
-                confirm "Continue at your own risk? (y/N): " || return 1 ;;
-            ok)      echo "[SHA256] OK." >&2 ;;
-            missing) echo "[SHA256] Hash not recognized. Skipping." >&2 ;;
-            error_file_too_large) echo "[SHA256] .sha256 too large. Skipping." >&2 ;;
-            error)   echo "[SHA256] Hash calculation error. Skipping." >&2 ;;
+                echo "$(t Error): $(tf ShaMismatch "$res")" >&2
+                confirm "$(t ShaRiskPrompt)" || return 1 ;;
+            ok)                   echo "$(t ShaOk)" >&2 ;;
+            missing)              echo "$(t ShaSkipNoHash)" >&2 ;;
+            error_file_too_large) echo "$(t ShaSkipTooBig)" >&2 ;;
+            error)                echo "$(t ShaSkipErr)" >&2 ;;
         esac
     else
-        echo "[SHA256] Check skipped by user." >&2
+        echo "$(t ShaSkipUser)" >&2
     fi
     echo "--------------------------------------------------------" >&2
 
-    local tpart=$(sys_part "$slot")
-    local opp=$([ "$slot" = "a" ] && echo b || echo a)
+    local tpart opp
+    tpart=$(sys_part "$slot")
+    opp=$([ "$slot" = "a" ] && echo b || echo a)
 
     if ! is_userspace; then
-        echo "Rebooting to Fastbootd..." >&2
-        log "Not in Fastbootd, reboot needed"
-        # On MTK, 'fastboot reboot fastboot' often returns non-zero because
-        # the bootloader drops USB before ACK. Reboot may have succeeded —
-        # rely on Wait-Fastboot instead of checking exit code.
-        fb reboot fastboot || true
+        echo "$(t RebootToFb)" >&2
+        log "$(t NotInFbReboot)"
+        fb_tolerant reboot fastboot || true
         wait_for_fastboot || return 1
     fi
 
     echo "--------------------------------------------------------" >&2
     echo "$(t RebuildSuper)" >&2
-    echo "  Target: $tpart" >&2
-    echo "  Size:   $part bytes" >&2
-    echo "  NOT touching: vendor / odm / vendor_dlkm / system_dlkm" >&2
+    tf TargetPart "$tpart" >&2
+    tf NewSize "$part" >&2
+    echo "  $(t NotTouching)" >&2
     echo "--------------------------------------------------------" >&2
     confirm || { log "Rebuild cancelled by user"; return 1; }
 
     if [ "$part" -gt $((4 * 1024 * 1024 * 1024)) ]; then
-        echo "WARNING: partition > 4 GB. MTK overflow possible." >&2
+        echo "$(t SuperBigWarn)" >&2
         confirm || return 1
     fi
 
@@ -676,10 +1042,11 @@ free_super_space() {
     fi
 
     log "Creating $tpart size=$part"
+    echo "Creating $tpart ($part bytes)..." >&2
     if ! fb create-logical-partition "$tpart" "$part"; then
         log_err "create-logical-partition failed"
-        echo "CRITICAL: create-logical-partition FAILED." >&2
-        echo "DO NOT REBOOT." >&2
+        echo "$(t CreateFailed)" >&2
+        echo "$(t CreateFailed2)" >&2
         return 1
     fi
     log "Partition $tpart recreated: $part bytes"
@@ -687,35 +1054,97 @@ free_super_space() {
 }
 
 # ==============================================================================
-# Backup /data
+# Backup /data via ADB stream
 # ==============================================================================
 backup_data_stream() {
-    clear; log "=== BACKUP ==="
-    wait_for_adb || { pause; return 1; }
-    echo "Убедитесь, что телефон в OrangeFox и Data расшифрована." >&2
-    adb_ shell "mount | grep -E '/data|/mnt|f2fs|ext4' || true"
-    read -rp "Раздел /data смонтирован? (y/N): " m
-    [[ ! "$m" =~ ^[Yy]$ ]] && { pause; return 1; }
+    clear
+    log "=== Backup-DataStream ==="
+    echo "$(t BackupTitle)" >&2
 
+    wait_for_adb || { pause; return 1; }
+    echo "$(t BackupWarning)" >&2
+    echo "$(t BackupCriticalWarn)" >&2
+    echo "$(t BackupCriticalHint)" >&2
+
+    # --- mount check ---
+    log "Mount check: /data"
+    local marr=()
+    [ -n "$SERIAL" ] && marr+=("-s" "$SERIAL")
+    marr+=("shell" "mount | grep -E '/data|f2fs|ext4' || true")
+    local mout
+    mout=$(timeout 15 adb "${marr[@]}" 2>&1 | tr -d '\r' || true)
+    [ -n "$mout" ] && log_raw "mount: $mout"
+    echo "$(t BackupMountOk)" >&2
+    confirm "$(t BackupMountAsk)" || { log "Backup cancelled at mount prompt"; return 1; }
+
+    # --- probe: adb alive AND tar --exclude supported ---
     local excludes="--exclude=media --exclude=dalvik-cache --exclude=tombstones --exclude=dropbox"
-    if ! adb_ shell "tar $excludes -cf /dev/null -C /data ." >/dev/null 2>&1; then
-        echo "[WARN] tar does not support --exclude, doing full backup" >&2
+    local parr=()
+    [ -n "$SERIAL" ] && parr+=("-s" "$SERIAL")
+    parr+=("shell" "echo ADB_OK; tar $excludes -cf /dev/null -C /data . >/dev/null 2>&1; echo RC=\$?")
+    local pout
+    pout=$(timeout 20 adb "${parr[@]}" 2>&1 | tr -d '\r' || true)
+    if [[ ! "$pout" =~ ADB_OK ]]; then
+        log_err "adb shell probe failed (adb lost connection?)"
+        echo "$(t BackupFailed) $LOG" >&2
+        pause; return 1
+    fi
+    if [[ ! "$pout" =~ RC=0 ]]; then
+        log_warn "tar --exclude not supported, full backup"
+        echo "$(t BackupNoExcl)" >&2
         excludes=""
     fi
 
-    local bdir="backups/data_$(date +%Y%m%d_%H%M%S)"; mkdir -p "$bdir"
+    # --- output path ---
+    local bdir="backups/data_$(date +%Y%m%d_%H%M%S)"
+    mkdir -p "$bdir"
     local bfile="$bdir/userdata_backup"
+    local remote_tar="tar -c -C /data $excludes ."
 
+    local sarr=()
+    [ -n "$SERIAL" ] && sarr+=("-s" "$SERIAL")
+    sarr+=("exec-out" "$remote_tar")
+
+    log "Backup stream start (timeout ${BACKUP_TIMEOUT}s): $remote_tar"
+    local rc=0
     if command -v pv >/dev/null 2>&1 && command -v lz4 >/dev/null 2>&1; then
-        if ! { adb_ shell "tar -c -C /data $excludes ." 2>>"$LOG" | pv -N "backup" | lz4 -9 > "${bfile}.tar.lz4"; }; then
-            log_err "backup failed"; pause; return 1
+        set -o pipefail
+        timeout "$BACKUP_TIMEOUT" adb "${sarr[@]}" 2>>"$LOG" | pv -N "$(t BackupProgress)" | lz4 -9 > "${bfile}.tar.lz4"
+        rc=${PIPESTATUS[0]}
+        set +o pipefail
+        if [ "$rc" -eq 124 ]; then
+            log_err "backup TIMEOUT after ${BACKUP_TIMEOUT}s"
+            echo "$(t BackupFailed) $LOG" >&2
+            pause; return 1
         fi
-        log "Backup OK: ${bfile}.tar.lz4"
+        if [ "$rc" -ne 0 ]; then
+            log_err "backup failed (adb rc=$rc)"
+            echo "$(t BackupFailed) $LOG" >&2
+            pause; return 1
+        fi
+        local sz
+        sz=$(stat -c%s "${bfile}.tar.lz4" 2>/dev/null || echo 0)
+        log "Backup OK: ${bfile}.tar.lz4 ($sz bytes)"
+        tf BackupDone "${bfile}.tar.lz4" >&2
     else
-        if ! adb_ shell "tar -cz -C /data $excludes ." 2>>"$LOG" > "${bfile}.tar.gz"; then
-            log_err "backup failed"; pause; return 1
+        set -o pipefail
+        timeout "$BACKUP_TIMEOUT" adb "${sarr[@]}" 2>>"$LOG" | gzip -9 > "${bfile}.tar.gz"
+        rc=${PIPESTATUS[0]}
+        set +o pipefail
+        if [ "$rc" -eq 124 ]; then
+            log_err "backup TIMEOUT after ${BACKUP_TIMEOUT}s"
+            echo "$(t BackupFailed) $LOG" >&2
+            pause; return 1
         fi
-        log "Backup OK: ${bfile}.tar.gz"
+        if [ "$rc" -ne 0 ]; then
+            log_err "backup failed (adb rc=$rc)"
+            echo "$(t BackupFailed) $LOG" >&2
+            pause; return 1
+        fi
+        local sz
+        sz=$(stat -c%s "${bfile}.tar.gz" 2>/dev/null || echo 0)
+        log "Backup OK: ${bfile}.tar.gz ($sz bytes)"
+        tf BackupDone "${bfile}.tar.gz" >&2
     fi
     ls -lh "$bdir" >&2
     pause
@@ -725,11 +1154,12 @@ backup_data_stream() {
 # GKI kernels
 # ==============================================================================
 flash_gki_cores() {
-    clear; log "=== GKI FLASH ==="
+    clear
+    log "=== Install-GkiKernels ==="
     local boot_file="" vendor_file=""
-    interactive_file_select "boot*.img" "Select BOOT (kernel):" || { pause; return 1; }
+    interactive_file_select "boot*.img" "$(t SelectBoot)" || { pause; return 1; }
     boot_file="$SELECTED_FILE"
-    interactive_file_select "vendor_boot*.img" "Select VENDOR_BOOT:" || { pause; return 1; }
+    interactive_file_select "vendor_boot*.img" "$(t SelectVendor)" || { pause; return 1; }
     vendor_file="$SELECTED_FILE"
     log "boot file: $boot_file"
     log "vendor_boot file: $vendor_file"
@@ -740,9 +1170,11 @@ flash_gki_cores() {
     wait_for_fastboot || { echo "Fastboot not found." >&2; pause; return 1; }
     check_bootloader_unlocked || { pause; return 1; }
 
-    local slot=$(get_current_slot)
+    local slot
+    slot=$(get_current_slot)
     log "Target slot: $slot"
-    read -rp "Flash to slot _$slot? (y/N): " c
+    local c
+    read -rp "$(tf FlashToSlot "$slot") " c
     if [[ "$c" =~ ^[Yy]$ ]]; then
         fb_flash flash "boot_$slot"        "$boot_file"   || { pause; return 1; }
         fb_flash flash "vendor_boot_$slot" "$vendor_file" || { pause; return 1; }
@@ -756,11 +1188,12 @@ flash_gki_cores() {
 # Emergency restore
 # ==============================================================================
 emergency_slot_fix() {
-    clear; log "=== EMERGENCY RESTORE ==="
+    clear
+    log "=== Restore-EmergencySlots ==="
     local b="" v=""
-    interactive_file_select "boot*.img" "Stable BOOT image:" || { pause; return 1; }
+    interactive_file_select "boot*.img" "$(t SelectStableBoot)" || { pause; return 1; }
     b="$SELECTED_FILE"
-    interactive_file_select "vendor_boot*.img" "Stable VENDOR_BOOT image:" || { pause; return 1; }
+    interactive_file_select "vendor_boot*.img" "$(t SelectStableVb)" || { pause; return 1; }
     v="$SELECTED_FILE"
     log "boot: $b"
     log "vendor_boot: $v"
@@ -780,18 +1213,18 @@ emergency_slot_fix() {
 }
 
 # ==============================================================================
-# Menus — all UI on stderr, only final choice echoed to stdout
+# Menus
 # ==============================================================================
 show_main_menu() {
     clear
-    echo "GSI Flash Tool $FULL_VERSION (Linux)" >&2
+    echo "$(t MainMenuTitle) $FULL_VERSION (Linux)" >&2
     echo "$(t LogFile): $LOG" >&2
     echo "========================================================" >&2
-    echo "  1. Проверить устройства (ADB / Fastboot)" >&2
-    echo "  2. $(t FromAndroid)" >&2
-    echo "  3. $(t FromRecovery)" >&2
-    echo "  4. $(t FromBootloader)" >&2
-    echo "  5. $(t AlreadyFb)" >&2
+    echo "  1. $(t MenuCheckDev)" >&2
+    echo "  2. $(t MenuFromAndroid)" >&2
+    echo "  3. $(t MenuFromRecovery)" >&2
+    echo "  4. $(t MenuFromBoot)" >&2
+    echo "  5. $(t MenuAlreadyFb)" >&2
     echo "  6. $(t ServiceMenu)" >&2
     echo "  0. $(t Exit)" >&2
     echo "========================================================" >&2
@@ -802,7 +1235,7 @@ show_main_menu() {
 
 show_action_menu() {
     clear
-    echo "Active slot: $CURRENT_SLOT  [A/B: $IS_AB_DEVICE]" >&2
+    tf ActiveSlotLine "$CURRENT_SLOT" "$IS_AB_DEVICE" >&2
     echo "========================================================" >&2
     echo "  1. $(t ActionUpdate)" >&2
     echo "  2. $(t ActionReset)" >&2
@@ -842,7 +1275,8 @@ do_flash() {
 
     case "$mode" in
         slot)
-            local sc; read -rp "$(t EnterSlot)" sc
+            local sc
+            read -rp "$(t EnterSlot)" sc
             [[ ! "$sc" =~ ^[ab]$ ]] && sc="$CURRENT_SLOT"
             log "Target slot: $sc"
             confirm_vbmeta || return
@@ -852,7 +1286,7 @@ do_flash() {
             [ "$IS_AB_DEVICE" = "yes" ] && fb set_active "$sc" || true
             fb reboot
             log "Flash OK (slot). Exiting."
-            echo "$(t FlashOk)"; exit 0
+            echo "$(t FlashOk)"; pause; exit 0
             ;;
         update)
             confirm_vbmeta || return
@@ -861,7 +1295,7 @@ do_flash() {
             fb erase cache || true
             fb reboot
             log "Flash OK (update). Exiting."
-            echo "$(t FlashOk)"; exit 0
+            echo "$(t FlashOk)"; pause; exit 0
             ;;
         reset)
             confirm_vbmeta || return
@@ -870,14 +1304,14 @@ do_flash() {
             fb_flash flash "$(sys_part "$CURRENT_SLOT")" "$SYSTEM_IMG" || return
             fb reboot
             log "Flash OK (reset). Exiting."
-            echo "$(t FlashOk)"; exit 0
+            echo "$(t FlashOk)"; pause; exit 0
             ;;
         dirty)
             check_bootloader_unlocked || return
             fb_flash flash "$(sys_part "$CURRENT_SLOT")" "$SYSTEM_IMG" || return
             fb reboot
             log "Flash OK (dirty). Exiting."
-            echo "$(t FlashOk)"; exit 0
+            echo "$(t FlashOk)"; pause; exit 0
             ;;
     esac
 }
@@ -887,8 +1321,13 @@ do_flash() {
 # ==============================================================================
 check_tool_versions
 problems=$?
-if [ $problems -gt 0 ]; then
-    echo "Some tools missing. Basic operations may not work." >&2
+if [ "$problems" -gt 0 ]; then
+    if [ "$STRICT_VERSIONS" = "yes" ]; then
+        echo "$(t StrictFail)" >&2
+        log_err "Strict version check failed ($problems problem(s)); aborting"
+        exit 1
+    fi
+    echo "$(t ToolsWarn)" >&2
     confirm || exit 1
 fi
 
@@ -911,10 +1350,10 @@ while true; do
                 done
                 ;;
             5) wait_for_fastboot && PROCEED=1 ;;
-            4) wait_for_fastboot && { fb reboot fastboot; wait_for_fastboot && PROCEED=1; } ;;
+            4) wait_for_fastboot && { fb_tolerant reboot fastboot; wait_for_fastboot && PROCEED=1; } ;;
             3) wait_for_adb && { adb_ reboot fastboot; wait_for_fastboot && PROCEED=1; } ;;
             2) wait_for_adb && { adb_ reboot fastboot; wait_for_fastboot && PROCEED=1; } ;;
-            1) adb devices; fastboot devices ;;
+            1) echo "-- ADB --" >&2; adb devices; echo "-- Fastboot --" >&2; fastboot devices ;;
         esac
         [ $PROCEED -eq 0 ] && pause
     done
@@ -930,20 +1369,21 @@ while true; do
         case "$a" in
             0) log "Back to main menu"; BACK=1 ;;
             4)
-                if [ "$IS_AB_DEVICE" != "yes" ]; then echo "Device is not A/B." >&2; pause; continue; fi
+                if [ "$IS_AB_DEVICE" != "yes" ]; then echo "$(t NotAb)" >&2; pause; continue; fi
+                local new
                 new=$([ "$CURRENT_SLOT" = "a" ] && echo b || echo a)
                 if is_userspace; then
                     log_warn "set_active in fastbootd: may fail on MTK"
-                    echo "WARNING: you are in Fastbootd. set_active may not work on MTK." >&2
-                    confirm "Try anyway? (y/N): " || continue
+                    echo "$(t SetActiveWarn)" >&2
+                    confirm "$(t SetActiveTry)" || continue
                 fi
                 if fb set_active "$new"; then
                     CURRENT_SLOT="$new"
                     log "Switched active slot to $CURRENT_SLOT"
-                    echo "Current slot: $CURRENT_SLOT" >&2
+                    tf CurrentSlotMsg "$CURRENT_SLOT" >&2
                 else
                     log_err "set_active $new FAILED"
-                    echo "ERROR: set_active failed. On MTK use bootloader, not fastbootd." >&2
+                    echo "$(t SetActiveFail)" >&2
                 fi
                 pause
                 ;;
