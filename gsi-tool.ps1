@@ -1,4 +1,4 @@
-# ==============================================================================
+﻿# ==============================================================================
 # GSI FLASH & SERVICE TOOL 1.0.2 (PowerShell edition)
 # Flash GSI, manage A/B slots, back up /data, service partitions.
 #
