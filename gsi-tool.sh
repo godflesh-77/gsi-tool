@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # GSI FLASH & SERVICE TOOL 0.9.9 (Linux)
-# Windows 10/11 is served by gsi-tool-0.9.9.ps1
+# Windows 10/11 is served by gsi-tool.ps1
 # ==============================================================================
 
 TOOL_VERSION="0.9.9"
@@ -414,13 +414,15 @@ verify_sha256() {
     [ -f "$path" ] || { log_err "Image not found: $path"; echo missing_img; return; }
     local want="" got=""
     if [ -n "$hash_arg" ] && [[ "$hash_arg" =~ ([a-fA-F0-9]{64}) ]]; then
-        want="${BASH_REMATCH[1],,}"
+        want=$(echo "${BASH_REMATCH[1]}" | tr 'A-F' 'a-f')
     elif [ -f "${path}.sha256" ]; then
         local sz=$(stat -c%s "${path}.sha256")
         if [ "$sz" -gt 4096 ]; then log_warn ".sha256 too large"; echo error_file_too_large; return; fi
         local content
         content=$(cat "${path}.sha256" 2>/dev/null | tr -d '\r\n ')
-        if [[ "$content" =~ ([a-fA-F0-9]{64}) ]]; then want="${BASH_REMATCH[1],,}"; fi
+        if [[ "$content" =~ ([a-fA-F0-9]{64}) ]]; then
+            want=$(echo "${BASH_REMATCH[1]}" | tr 'A-F' 'a-f')
+        fi
     fi
     if [ -z "$want" ]; then log_warn "No SHA256 hash available"; echo missing; return; fi
     if command -v pv >/dev/null 2>&1 && [ -t 1 ]; then
@@ -428,7 +430,7 @@ verify_sha256() {
     else
         got=$(sha256sum "$path" | awk '{print $1}')
     fi
-    got="${got,,}"
+    got=$(echo "$got" | tr 'A-F' 'a-f')
     if [ "$got" = "$want" ]; then log "SHA256 OK ($got)"; echo ok
     else log_err "SHA256 mismatch: want=$want got=$got"; echo "mismatch:$got"; fi
 }
@@ -640,6 +642,9 @@ free_super_space() {
     if ! is_userspace; then
         echo "Rebooting to Fastbootd..." >&2
         log "Not in Fastbootd, reboot needed"
+        # On MTK, 'fastboot reboot fastboot' often returns non-zero because
+        # the bootloader drops USB before ACK. Reboot may have succeeded —
+        # rely on Wait-Fastboot instead of checking exit code.
         fb reboot fastboot || true
         wait_for_fastboot || return 1
     fi

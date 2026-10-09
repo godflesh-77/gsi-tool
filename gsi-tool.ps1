@@ -704,11 +704,10 @@ function Invoke-FreeSuperSpace {
     if (-not (Test-Userspace)) {
         Say 'Rebooting to Fastbootd...' 'Cyan'
         Log 'Not in Fastbootd, reboot needed'
-        if (-not (Invoke-Fb 'reboot' 'fastboot')) {
-            LogErr 'fastboot reboot fastboot failed'
-            Say 'ERROR: failed to send reboot command to device.' 'Red'
-            return $false
-        }
+        # On MTK, 'fastboot reboot fastboot' often returns non-zero because the
+        # bootloader drops USB before ACK. The reboot may have succeeded —
+        # rely on Wait-Fastboot instead of checking exit code.
+        [void](Invoke-Fb 'reboot' 'fastboot')
         if (-not (Wait-Fastboot)) { return $false }
     }
 
