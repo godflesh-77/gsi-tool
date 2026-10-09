@@ -1,5 +1,3 @@
----
-
 # gsi-tool
 
 **GSI flash & service tool для Android-устройств с A/B-разметкой и динамическими разделами (Dynamic Partitions / Super).**
