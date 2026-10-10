@@ -1,13 +1,13 @@
 #!/bin/bash
 # ==============================================================================
-# GSI FLASH & SERVICE TOOL 1.0.2 (Linux)
+# GSI FLASH & SERVICE TOOL 1.0.3 (Linux)
 # Flash GSI, manage A/B slots, back up /data, service partitions.
 #
 # Repository: https://github.com/godflesh-77/gsi-tool
 # License:    MIT
 # ==============================================================================
 
-TOOL_VERSION="1.0.2"
+TOOL_VERSION="1.0.3"
 
 if command -v git >/dev/null 2>&1 && [ -d .git ]; then
     BUILD=$(git rev-parse --short HEAD 2>/dev/null || date +%Y%m%d.%H%M)
@@ -15,6 +15,9 @@ else
     BUILD=$(date +%Y%m%d.%H%M)
 fi
 FULL_VERSION="${TOOL_VERSION}+build.${BUILD}"
+
+# Determine script directory independent of CWD (matches PS $PSScriptRoot)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 
 # --------- defaults ---------
 LANG_CODE="en"
@@ -34,6 +37,7 @@ CURRENT_SLOT="a"
 LOG=""
 SELECTED_FILE=""
 SYSTEM_IMG=""
+MENU_CHOICE=""
 
 # ==============================================================================
 # CLI flags
@@ -326,7 +330,7 @@ tf() {
 # ==============================================================================
 # Logging — stderr for live output, file for archive
 # ==============================================================================
-LOG_DIR="logs"; mkdir -p "$LOG_DIR"
+LOG_DIR="$SCRIPT_DIR/logs"; mkdir -p "$LOG_DIR"
 LOG="$LOG_DIR/gsi-tool_${TOOL_VERSION}_$(date +%Y%m%d_%H%M%S).log"
 {
     echo "=== SESSION START $(date) ==="
@@ -354,6 +358,18 @@ confirm() {
     [[ "$r" =~ ^[Yy]$ ]] && res=1
     log "Confirm '$prompt' -> $res"
     return $((1-res))
+}
+
+# Sanitize user input from `read`: strip CR, ESC, control chars, whitespace.
+# Keep only the first digit. Handles terminals that send CRLF or embed
+# escape sequences from `clear` into the captured string.
+sanitize_choice() {
+    local raw="$1"
+    raw="${raw//$'\r'/}"
+    raw="${raw//$'\n'/}"
+    raw="${raw//$'\033'/}"
+    raw="${raw//[!0-9]/}"
+    echo "${raw:0:1}"
 }
 
 # ==============================================================================
@@ -441,13 +457,13 @@ check_tool_versions() {
         fi
     fi
 
+    # 7-Zip: optional on Linux. If present but version unparseable — not fatal.
     if command -v 7z >/dev/null 2>&1; then
         local sz_v
-        sz_v=$(7z 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+' | head -1)
+        sz_v=$(7z 2>&1 | head -1 | grep -oE '[0-9]+\.[0-9]+' | head -1)
         if [ -z "$sz_v" ]; then
-            echo "  7-Zip    : $(t VersionUnknown)" >&2
-            log_warn "7-Zip version unknown"
-            problems=$((problems+1))
+            echo "  7-Zip    : $(t VersionUnknown)  (optional on Linux)" >&2
+            log "7-Zip present but version unparseable (optional on Linux)"
         elif ! version_ge "$sz_v" "22.00"; then
             echo "  7-Zip    : $sz_v  $(tf VersionTooOld 22.00)" >&2
             log_warn "7-Zip version too old: $sz_v (need >= 22.00)"
@@ -778,8 +794,9 @@ interactive_file_select() {
     local choice
     while true; do
         read -rp "$(t Input)" choice
+        choice=$(sanitize_choice "$choice")
         [ "$choice" = "0" ] && { eval "$old"; return 1; }
-        if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le ${#files[@]} ]; then
+        if [ -n "$choice" ] && [ "$choice" -ge 1 ] && [ "$choice" -le ${#files[@]} ]; then
             SELECTED_FILE="${files[$((choice-1))]}"
             log "Selected: $SELECTED_FILE"
             eval "$old"; return 0
@@ -850,8 +867,9 @@ select_system_image() {
     local choice
     while true; do
         read -rp "$(t Input)" choice
+        choice=$(sanitize_choice "$choice")
         if [ "$choice" = "0" ]; then log "cancelled"; return 1; fi
-        if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le ${#sys[@]} ]; then
+        if [ -n "$choice" ] && [ "$choice" -ge 1 ] && [ "$choice" -le ${#sys[@]} ]; then
             log "User selected: ${sys[$((choice-1))]}"
             echo "${sys[$((choice-1))]}"; return 0
         fi
@@ -1046,7 +1064,6 @@ free_super_space() {
 
 # ==============================================================================
 # Backup /data via ADB stream
-# 1.0.2: check entire PIPESTATUS, drop broken archive on any failure.
 # ==============================================================================
 backup_data_stream() {
     clear
@@ -1058,7 +1075,6 @@ backup_data_stream() {
     echo "$(t BackupCriticalWarn)" >&2
     echo "$(t BackupCriticalHint)" >&2
 
-    # --- mount check ---
     log "Mount check: /data"
     local marr=()
     [ -n "$SERIAL" ] && marr+=("-s" "$SERIAL")
@@ -1069,7 +1085,6 @@ backup_data_stream() {
     echo "$(t BackupMountOk)" >&2
     confirm "$(t BackupMountAsk)" || { log "Backup cancelled at mount prompt"; return 1; }
 
-    # --- probe: adb alive AND tar --exclude supported ---
     local excludes="--exclude=media --exclude=dalvik-cache --exclude=tombstones --exclude=dropbox"
     local parr=()
     [ -n "$SERIAL" ] && parr+=("-s" "$SERIAL")
@@ -1087,8 +1102,7 @@ backup_data_stream() {
         excludes=""
     fi
 
-    # --- output path ---
-    local bdir="backups/data_$(date +%Y%m%d_%H%M%S)"
+    local bdir="$SCRIPT_DIR/backups/data_$(date +%Y%m%d_%H%M%S)"
     mkdir -p "$bdir"
     local bfile="$bdir/userdata_backup"
     local remote_tar="tar -c -C /data $excludes ."
@@ -1100,10 +1114,8 @@ backup_data_stream() {
     log "Backup stream start (timeout ${BACKUP_TIMEOUT}s): $remote_tar"
 
     if command -v pv >/dev/null 2>&1 && command -v lz4 >/dev/null 2>&1; then
-        # ===== fast path: pv + lz4 =====
         set -o pipefail
         timeout "$BACKUP_TIMEOUT" adb "${sarr[@]}" 2>>"$LOG" | pv -N "$(t BackupProgress)" | lz4 -9 > "${bfile}.tar.lz4"
-        # Capture PIPESTATUS IMMEDIATELY — must be a bare assignment, not `local`.
         rc_array=("${PIPESTATUS[@]}")
         set +o pipefail
         local adb_rc=${rc_array[0]}
@@ -1133,7 +1145,6 @@ backup_data_stream() {
         log "Backup OK: ${bfile}.tar.lz4 ($sz bytes)"
         tf BackupDone "${bfile}.tar.lz4" >&2
     else
-        # ===== fallback: gzip =====
         set -o pipefail
         timeout "$BACKUP_TIMEOUT" adb "${sarr[@]}" 2>>"$LOG" | gzip -9 > "${bfile}.tar.gz"
         rc_array=("${PIPESTATUS[@]}")
@@ -1231,7 +1242,7 @@ emergency_slot_fix() {
 }
 
 # ==============================================================================
-# Menus
+# Menus — set global MENU_CHOICE (avoids $( ) capture of clear/escape codes)
 # ==============================================================================
 show_main_menu() {
     clear
@@ -1246,9 +1257,10 @@ show_main_menu() {
     echo "  6. $(t ServiceMenu)" >&2
     echo "  0. $(t Exit)" >&2
     echo "========================================================" >&2
-    local c; read -rp "$(t Input)" c
-    log "Main menu: choice=$c"
-    echo "$c"
+    local raw
+    read -rp "$(t Input)" raw
+    MENU_CHOICE=$(sanitize_choice "$raw")
+    log "Main menu: choice=[$MENU_CHOICE]"
 }
 
 show_action_menu() {
@@ -1262,9 +1274,10 @@ show_action_menu() {
     echo "  5. $(t ActionDirty)" >&2
     echo "  0. $(t Back)" >&2
     echo "========================================================" >&2
-    local c; read -rp "$(t Input)" c
-    log "Action menu: choice=$c"
-    echo "$c"
+    local raw
+    read -rp "$(t Input)" raw
+    MENU_CHOICE=$(sanitize_choice "$raw")
+    log "Action menu: choice=[$MENU_CHOICE]"
 }
 
 show_service_menu() {
@@ -1274,9 +1287,10 @@ show_service_menu() {
     echo "  2. $(t FlashingGki)" >&2
     echo "  3. $(t EmergencyFix)" >&2
     echo "  0. $(t Back)" >&2
-    local c; read -rp "$(t Input)" c
-    log "Service menu: choice=$c"
-    echo "$c"
+    local raw
+    read -rp "$(t Input)" raw
+    MENU_CHOICE=$(sanitize_choice "$raw")
+    log "Service menu: choice=[$MENU_CHOICE]"
 }
 
 # ==============================================================================
@@ -1295,6 +1309,7 @@ do_flash() {
         slot)
             local sc
             read -rp "$(t EnterSlot)" sc
+            sc=$(sanitize_choice "$sc")
             [[ ! "$sc" =~ ^[ab]$ ]] && sc="$CURRENT_SLOT"
             log "Target slot: $sc"
             confirm_vbmeta || return
@@ -1352,18 +1367,20 @@ fi
 while true; do
     PROCEED=0
     while [ $PROCEED -eq 0 ]; do
-        c=$(show_main_menu)
+        show_main_menu
+        c="$MENU_CHOICE"
         case "$c" in
             0) log "Exit from main menu"; exit 0 ;;
             6)
                 while true; do
-                    s=$(show_service_menu)
+                    show_service_menu
+                    s="$MENU_CHOICE"
                     [ "$s" = "0" ] && break
                     case "$s" in
                         1) backup_data_stream ;;
                         2) flash_gki_cores ;;
                         3) emergency_slot_fix ;;
-                        *) log "Unknown service choice: $s" ;;
+                        *) log "Unknown service choice: [$s]" ;;
                     esac
                 done
                 ;;
@@ -1372,6 +1389,7 @@ while true; do
             3) wait_for_adb && { adb_ reboot fastboot; wait_for_fastboot && PROCEED=1; } ;;
             2) wait_for_adb && { adb_ reboot fastboot; wait_for_fastboot && PROCEED=1; } ;;
             1) echo "-- ADB --" >&2; adb devices; echo "-- Fastboot --" >&2; fastboot devices ;;
+            *) log "Unknown main menu choice: [$c]" ;;
         esac
         [ $PROCEED -eq 0 ] && pause
     done
@@ -1383,7 +1401,8 @@ while true; do
 
     BACK=0
     while [ $BACK -eq 0 ]; do
-        a=$(show_action_menu)
+        show_action_menu
+        a="$MENU_CHOICE"
         case "$a" in
             0) log "Back to main menu"; BACK=1 ;;
             4)
@@ -1409,6 +1428,7 @@ while true; do
             2) do_flash reset ;;
             3) do_flash slot ;;
             5) do_flash dirty ;;
+            *) log "Unknown action menu choice: [$a]" ;;
         esac
     done
 done

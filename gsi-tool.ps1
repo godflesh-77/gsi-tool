@@ -19,7 +19,7 @@ $null = [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 $ErrorActionPreference = 'Continue'
 
-$Script:TOOL_VERSION = '1.0.2'
+$Script:TOOL_VERSION = '1.0.3'
 
 $buildHash = $null
 if (Get-Command git -ErrorAction SilentlyContinue) {
