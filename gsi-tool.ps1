@@ -1,5 +1,5 @@
 ﻿# ==============================================================================
-# GSI FLASH & SERVICE TOOL 1.0.3 (PowerShell edition)
+# GSI FLASH & SERVICE TOOL (PowerShell edition)
 # Flash GSI, manage A/B slots, back up /data, service partitions.
 #
 # Repository: https://codeberg.org/godflesh-77/gsi-tool
@@ -13,6 +13,7 @@ param(
     [switch]$Version,
     [switch]$Help,
     [switch]$StrictVersions,
+    [switch]$Admin,
     [string]$Serial
 )
 
@@ -20,7 +21,26 @@ $null = [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 $ErrorActionPreference = 'Continue'
 
-$Script:TOOL_VERSION = '1.0.3'
+# --- UAC self-restart ------------------------------------------------------
+# If -Admin was requested but we're not elevated, re-launch elevated with
+# the same arguments. The original process exits immediately; work is done
+# by the elevated instance. Runs before any UI/log setup.
+if ($Admin -and -not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath, '-Admin')
+    if ($Lang)           { $argList += @('-Lang', $Lang) }
+    if ($Serial)         { $argList += @('-Serial', $Serial) }
+    if ($StrictVersions) { $argList += '-StrictVersions' }
+    try {
+        Start-Process -FilePath 'powershell.exe' -ArgumentList $argList -Verb RunAs
+    } catch {
+        Write-Host "UAC elevation failed: $_" -ForegroundColor Red
+        exit 1
+    }
+    exit 0
+}
+# ---------------------------------------------------------------------------
+
+$Script:TOOL_VERSION = '1.1.0'
 
 $buildHash = $null
 if (Get-Command git -ErrorAction SilentlyContinue) {
@@ -168,6 +188,16 @@ $MSG = @{
         BackupFailed    = 'Backup FAILED. See log: {0}'
         BackupNo7Zip    = 'Backup requires 7-Zip. Install 7-Zip 22.00+ and retry.'
 
+        PartBackupMenu    = 'Backup critical partitions (nvram/persist/modemst)'
+        PartBackupTitle   = 'BACKUP CRITICAL PARTITIONS'
+        PartBackupInfo    = 'Reads nvram, persist, modemst1/2, fsg, fsc, misc, bluetooth, oem via dd + gzip.'
+        PartBackupRootWarn= 'Root is required (adb shell id must return uid=0). Use recovery with adb root.'
+        PartBackupNoRoot  = 'ERROR: root required. Cannot read raw partitions.'
+        PartBackupNoPart  = 'Partition not found, skipping: {0}'
+        PartBackupProgress= 'Reading {0}'
+        PartBackupDone    = 'Backup OK: {0} partition(s) -> {1}'
+        PartBackupFailed  = 'Backup FAILED: {0}'
+
         ExitCodeMsg     = 'Exit code: {0}'
     }
     ru = @{
@@ -285,6 +315,16 @@ $MSG = @{
         BackupFailed    = 'Бэкап НЕ УДАЛСЯ. См. лог: {0}'
         BackupNo7Zip    = 'Для бэкапа нужен 7-Zip. Установите 7-Zip 22.00+ и повторите.'
 
+        PartBackupMenu    = 'Бэкап критических разделов (nvram/persist/modemst)'
+        PartBackupTitle   = 'БЭКАП КРИТИЧЕСКИХ РАЗДЕЛОВ'
+        PartBackupInfo    = 'Читает nvram, persist, modemst1/2, fsg, fsc, misc, bluetooth, oem через dd + gzip.'
+        PartBackupRootWarn= 'Нужен root (adb shell id должен вернуть uid=0). Используйте recovery с adb root.'
+        PartBackupNoRoot  = 'ОШИБКА: нужен root. Невозможно прочитать raw-разделы.'
+        PartBackupNoPart  = 'Раздел не найден, пропуск: {0}'
+        PartBackupProgress= 'Чтение {0}'
+        PartBackupDone    = 'Бэкап готов: {0} разделов -> {1}'
+        PartBackupFailed  = 'Бэкап НЕ УДАЛСЯ: {0}'
+
         ExitCodeMsg     = 'Код выхода: {0}'
     }
 }
@@ -356,7 +396,7 @@ if ($Version) { Write-Output $Script:TOOL_VERSION; exit 0 }
 if ($Help) {
     Write-Output "GSI Flash Tool $($Script:TOOL_VERSION)"
     Write-Output "Build: $($Script:BUILD)"
-    Write-Output "Usage: gsi-tool.ps1 [-Lang en|ru] [-Serial <serial>] [-StrictVersions] [-Version] [-Help]"
+    Write-Output "Usage: gsi-tool.ps1 [-Lang en|ru] [-Serial <serial>] [-StrictVersions] [-Admin] [-Version] [-Help]"
     exit 0
 }
 
@@ -1231,6 +1271,125 @@ function Backup-DataStream {
 # ==============================================================================
 # GKI / Emergency
 # ==============================================================================
+
+function Backup-CriticalPartitions {
+    Clear-Host
+    Log "=== Backup-CriticalPartitions ==="
+    Say (T 'PartBackupTitle') 'Cyan'
+    Say (T 'PartBackupInfo')  'Gray'
+
+    if (-not (Wait-Adb)) { Pause; return }
+
+    # Root check
+    $idArgs = @()
+    if ($Script:Serial) { $idArgs += @('-s', $Script:Serial) }
+    $idArgs += @('shell', 'id')
+    $idOut = ''
+    try { $idOut = & $Script:ADB_PATH @idArgs 2>&1 | Out-String } catch { }
+    if ($idOut -notmatch 'uid=0') {
+        LogErr "root required (id: $($idOut.Trim()))"
+        Say (T 'PartBackupRootWarn') 'Yellow'
+        Say (T 'PartBackupNoRoot')   'Red'
+        Pause; return
+    }
+
+    $backupDir = Join-Path $PSScriptRoot ("backups\partitions_" + (Get-Date -Format 'yyyyMMdd_HHmmss'))
+    New-Item -ItemType Directory -Path $backupDir -Force | Out-Null
+    Log "Partition backup target: $backupDir"
+
+    $parts = @('nvram','persist','modemst1','modemst2','fsg','fsc','misc','bluetooth','oem')
+    $meta  = @()
+    $meta += "Generated: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+    $meta += "Tool version: $($Script:TOOL_VERSION)"
+    $meta += "Serial: $(if ($Script:Serial) { $Script:Serial } else { '(auto)' })"
+    $meta += ""
+    $meta += ("{0,-12} {1,14}  {2}" -f 'Partition','Size(bytes)','SHA256')
+
+    $okCount = 0
+    foreach ($p in $parts) {
+        # existence check
+        $chkArgs = @()
+        if ($Script:Serial) { $chkArgs += @('-s', $Script:Serial) }
+        $chkArgs += @('shell', "[ -e /dev/block/by-name/$p ] && echo YES || echo NO")
+        $chk = ''
+        try { $chk = & $Script:ADB_PATH @chkArgs 2>&1 | Out-String } catch { }
+        if ($chk -notmatch 'YES') {
+            LogWarn "Partition not present: $p"
+            Say ((T 'PartBackupNoPart') -f $p) 'Yellow'
+            continue
+        }
+
+        Say ((T 'PartBackupProgress') -f $p) 'Cyan'
+        $outFile = Join-Path $backupDir "$p.img.gz"
+
+        $ddArgs = @()
+        if ($Script:Serial) { $ddArgs += @('-s', $Script:Serial) }
+        $ddArgs += @('exec-out', "dd if=/dev/block/by-name/$p bs=1M 2>/dev/null")
+
+        $adbProc = New-Object System.Diagnostics.Process
+        $adbProc.StartInfo.FileName               = $Script:ADB_PATH
+        $adbProc.StartInfo.Arguments              = Format-Args $ddArgs
+        $adbProc.StartInfo.RedirectStandardOutput = $true
+        $adbProc.StartInfo.RedirectStandardError  = $false
+        $adbProc.StartInfo.UseShellExecute        = $false
+        $adbProc.StartInfo.CreateNoWindow         = $true
+
+        $fs = $null; $gz = $null
+        try {
+            [void]$adbProc.Start()
+            $fs = [IO.File]::Create($outFile)
+            $gz = New-Object System.IO.Compression.GZipStream($fs, [System.IO.Compression.CompressionLevel]::Optimal)
+
+            $buffer = New-Object byte[] 65536
+            $total  = [UInt64]0
+            while (($read = $adbProc.StandardOutput.BaseStream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+                $gz.Write($buffer, 0, $read)
+                $total += $read
+            }
+            $gz.Close(); $gz = $null
+            $fs.Close(); $fs = $null
+            $adbProc.WaitForExit()
+
+            if ($adbProc.ExitCode -ne 0) {
+                LogErr "dd exit code: $($adbProc.ExitCode) for $p"
+                if (Test-Path -LiteralPath $outFile) { Remove-Item -LiteralPath $outFile -Force -EA SilentlyContinue }
+                continue
+            }
+            if ($total -eq 0) {
+                LogWarn "Zero bytes read for $p (empty or inaccessible)"
+                if (Test-Path -LiteralPath $outFile) { Remove-Item -LiteralPath $outFile -Force -EA SilentlyContinue }
+                continue
+            }
+
+            $hash = (Get-FileHash -LiteralPath $outFile -Algorithm SHA256).Hash.ToLower()
+            $csz  = (Get-Item -LiteralPath $outFile).Length
+            $meta += ("{0,-12} {1,14}  {2}" -f "$p.gz", $csz, $hash)
+            $meta += ("  (raw: $total bytes)")
+            Log "Backup OK: $p -> $outFile ($total raw, $csz gz, sha=$hash)"
+            $okCount++
+        } catch {
+            LogErr "Backup failed for $p : $_"
+            if ($gz) { try { $gz.Close() } catch { } }
+            if ($fs) { try { $fs.Close() } catch { } }
+            if (-not $adbProc.HasExited) { try { $adbProc.Kill() } catch { } }
+            if (Test-Path -LiteralPath $outFile) { Remove-Item -LiteralPath $outFile -Force -EA SilentlyContinue }
+        } finally {
+            try { $adbProc.Dispose() } catch { }
+        }
+    }
+
+    $metaFile = Join-Path $backupDir 'metadata.txt'
+    $meta | Set-Content -LiteralPath $metaFile -Encoding UTF8
+    Log "Metadata written: $metaFile"
+
+    if ($okCount -gt 0) {
+        Say ((T 'PartBackupDone') -f $okCount, $backupDir) 'Green'
+    } else {
+        Say ((T 'PartBackupFailed') -f 'no partitions backed up') 'Red'
+    }
+    Pause
+}
+
 function Install-GkiKernels {
     Clear-Host
     Log "=== Install-GkiKernels ==="
@@ -1322,6 +1481,7 @@ function Show-ServiceMenu {
     Say "  1. $(T 'Backing')"
     Say "  2. $(T 'FlashingGki')"
     Say "  3. $(T 'EmergencyFix')"
+    Say "  4. $(T 'PartBackupMenu')"
     Say "  0. $(T 'Back')"
     $choice = Read-Host -Prompt (T 'Input')
     Log "Service menu: choice=$choice"
@@ -1420,6 +1580,7 @@ while ($true) {
                         '1' { Backup-DataStream }
                         '2' { Install-GkiKernels }
                         '3' { Restore-EmergencySlots }
+                        '4' { Backup-CriticalPartitions }
                         default { Log "Unknown service choice: $s" }
                     }
                 }

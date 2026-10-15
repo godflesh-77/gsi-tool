@@ -1,5 +1,13 @@
 # Roadmap
 
+## Done in 1.1.0 (2026-10-15)
+- **`-Admin` flag (Windows)** — UAC self-relaunch with argument forwarding.
+- **Windows Terminal detection** in `.cmd` launcher (falls back to plain PowerShell).
+- **Critical partitions backup** — `nvram`, `persist`, `modemst1/2`, `fsg`, `fsc`, `misc`, `bluetooth`, `oem` via `adb exec-out dd | gzip` (requires root). Output: `backups/partitions_*/<name>.img.gz` + `metadata.txt` (sizes, SHA256).
+- **README "Related documents"** section with links to localised CHANGELOG / ROADMAP / TODO.
+- **Codeberg is now the primary repository**, GitHub is a read-only push-mirror.
+- **macOS support removed** from the roadmap.
+
 ## Done in 1.0.3 (2026-10-10)
 - **Hotfix (Linux)**: three defects found in 1.0.2:
   - menu input not matching due to ANSI escapes captured from `clear`
@@ -50,21 +58,19 @@
 - `set_active` protection on MTK fastbootd
 - Size check when selecting system image
 
-## 1.1.0
+## 1.2.0
 - **DSU Sideloader integration** — launch a second GSI without changing slots.
 - **Slot A → B clone** — duplicate `system`/`vendor`/`boot`/`dtbo` for safe experiments.
 - **Auto-defragment super** — defragment the `super` container via `lptools`.
 - **`lpmake` on-device** — rebuild super on the device if GSI doesn't fit after delete.
 - **Unify backup logic** between `.sh` and `.ps1` (single archive format).
-- **macOS support** (`uname -m` Darwin, `gtimeout`, `gstat`, `gdf`, `gsha256sum`).
-- **Backup critical partitions** — nvram / persist / modemst via `dd` from recovery.
 - **`set -u` in Linux** — after auditing all variables.
 - **Merge helper calls** into `super_prep` (Linux).
+- **Final smoke test** on a live GSI (Lunaris) before publishing.
 
 ## 2.0.0 (ideas)
 - GUI wrapper (Electron / Tauri) for Windows and Linux.
 - Support for non-A/B devices (A-only) with auto-detection.
 - Codeberg (Forgejo) Releases integration for automatic GSI download.
 - Export flash report to JSON / HTML.
-- `-Admin` flag for Windows (run elevated).
-- Codeberg (Forgejo) Releases integration for automatic GSI download.
+- Automatic script update check via Codeberg API.

@@ -25,6 +25,7 @@
   - Windows — `adb exec-out` → буферный цикл 64 КБ → `7z -si` (прогресс через `Write-Progress`)
   - Linux — `adb exec-out` → `pv` → `lz4`/`gzip` (при наличии `pv` и `lz4` — быстрый бэкап)
 - **Предупреждение про IMEI / MAC / Widevine** при бэкапе `/data` — эти данные лежат в `/persist`, `/nvram`, `/modemst*`, `/misc`, и в `/data` их нет
+- **Бэкап критических разделов** — читает `nvram`, `persist`, `modemst1/2`, `fsg`, `fsc`, `misc`, `bluetooth`, `oem` через `adb exec-out dd` + gzip (нужен root)
 - **Прошивка GKI-ядер** (`boot` + `vendor_boot`) в активный слот
 - **Экстренный откат** — двойная запись ядер в оба слота + `set_active a`
 - **Логирование** всех операций в `logs/`
@@ -85,7 +86,8 @@
 | `-Lang en\|ru` / `--lang=en\|ru` | Форсировать язык UI (по умолчанию — авто из `$PSUICulture` / `$LANG`) |
 | `-Serial <serial>` / `--serial=<serial>` | Таргетинг конкретного устройства при нескольких подключённых |
 | `-StrictVersions` / `--strict-versions` | Hard-fail при любом problem в версиях утилит, включая «версия не распознана» |
-| `-Version` / `--version` / `-v` | Показать версию (`1.0.3`, без build-суффикса) |
+| `-Version` / `--version` / `-v` | Показать версию |
+| `-Admin` (только PS) | Само-перезапуск с UAC (полезно, если `logs/` требует админских прав) |
 | `-Help` / `--help` / `-h` | Показать справку |
 
 **Примеры:**
@@ -93,6 +95,14 @@
 PowerShell: `.\gsi-tool.cmd -Serial ABC123 -StrictVersions`
 
 Bash: `./gsi-tool.sh --serial=ABC123 --strict-versions`
+
+---
+
+## Связанные документы
+
+- [CHANGELOG](CHANGELOG.md) · [CHANGELOG (RU)](CHANGELOG.ru.md)
+- [Roadmap](ROADMAP.md) · [Roadmap (RU)](ROADMAP.ru.md)
+- [TODO](TODO.md) · [TODO (RU)](TODO.ru.md)
 
 ---
 

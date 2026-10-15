@@ -6,15 +6,43 @@ Versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+_(nothing yet)_
+
+## [1.1.0] — 2026-10-15
+
+- **Minor release.** Two new features plus accumulated backlog cleanup.
+  Codeberg is now the primary repository.
+
+### Added
+- **`-Admin` flag (Windows).** `gsi-tool.ps1 -Admin` (or `gsi-tool.cmd -Admin`)
+  self-relaunches via UAC if not already elevated. Useful when `logs/` needs
+  admin rights (e.g. script placed under `C:\Program Files\`). All other
+  CLI flags (`-Lang`, `-Serial`, `-StrictVersions`) are forwarded to the
+  elevated instance.
+- **Windows Terminal detection in `.cmd`.** If `wt.exe` is present, the
+  launcher runs the script inside Windows Terminal (nicer resize, tabs,
+  Unicode). Falls back to plain `powershell.exe` otherwise.
+- **Critical partitions backup (both platforms).** New service menu item:
+  reads `nvram`, `persist`, `modemst1`, `modemst2`, `fsg`, `fsc`, `misc`,
+  `bluetooth`, `oem` via `adb exec-out dd | gzip`. Requires root
+  (`adb shell id` → `uid=0`). Output:
+  `backups/partitions_YYYYMMDD_HHMMSS/<name>.img.gz` + `metadata.txt`
+  with sizes and SHA256 hashes. Missing partitions are skipped with a
+  warning; zero-byte or failed reads are cleaned up.
+
 ### Changed
-- **Development moved to Codeberg** — https://codeberg.org/godflesh-77/gsi-tool.
-  GitHub (https://github.com/godflesh-77/gsi-tool) is now a read-only mirror.
+- **Version bumped 1.0.3 → 1.1.0.**
+- **Primary repository moved to Codeberg** (https://codeberg.org/godflesh-77/gsi-tool).
+  GitHub (`godflesh-77/gsi-tool`) is now a read-only push-mirror.
+- **README: new "Related documents" section** with links to localised
+  CHANGELOG / ROADMAP / TODO.
+- **macOS support removed from roadmap** — no practical demand.
 
 ## [1.0.3] — 2026-10-10
 
-**Hotfix (Linux).** Found in 1.0.2: the menu did not respond to input —
-items 0-6 fell through `case` without matching, and the script looped on
-redrawing the menu. Also a spurious 7-Zip warning and relative-path logs.
+- **Hotfix (Linux).** Found in 1.0.2: the menu did not respond to input —
+  items 0-6 fell through `case` without matching, and the script looped on
+  redrawing the menu. Also a spurious 7-Zip warning and relative-path logs.
 
 ### Fixed
 - **Critical (Linux): menu did not match user choice.**
@@ -52,9 +80,9 @@ redrawing the menu. Also a spurious 7-Zip warning and relative-path logs.
 
 ## [1.0.2] — 2026-10-09
 
-**Patch release.** Closes 4 defects in the `/data` backup pipeline found
-during the 1.0.1 audit. Errors were silent — the script reported
-"Backup OK" on truncated archives. No new features.
+- **Patch release.** Closes 4 defects in the `/data` backup pipeline found
+  during the 1.0.1 audit. Errors were silent — the script reported
+  "Backup OK" on truncated archives. No new features.
 
 ### Fixed
 - **Critical (PowerShell): `Backup-DataStream` did not check `adb.ExitCode`.**
@@ -91,9 +119,9 @@ during the 1.0.1 audit. Errors were silent — the script reported
 
 ## [1.0.1] — 2026-10-09
 
-**Fix release.** Closes bugs found while re-reading 1.0.0. Plus trivial
-improvements deferred earlier: unified headers, IMEI/MAC/Widevine warning,
-`pv` decompression progress. No new major features.
+- **Fix release.** Closes bugs found while re-reading 1.0.0. Plus trivial
+  improvements deferred earlier: unified headers, IMEI/MAC/Widevine warning,
+  `pv` decompression progress. No new major features.
 
 ### Added
 - **Unified headers for `.sh` / `.ps1` / `.cmd`.** Single format: name,
@@ -153,9 +181,9 @@ improvements deferred earlier: unified headers, IMEI/MAC/Widevine warning,
 
 ## [1.0.0] — 2026-10-09
 
-**First stable release.** Full Windows/Linux parity for backup and
-version-check features, strict mode, critical fix for Linux streaming bug,
-unified i18n and Pause behavior.
+- **First stable release.** Full Windows/Linux parity for backup and
+  version-check features, strict mode, critical fix for Linux streaming bug,
+  unified i18n and Pause behavior.
 
 ### Added
 - **`Backup-DataStream` in PowerShell.** Full port of the Linux version:

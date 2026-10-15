@@ -1,6 +1,6 @@
 #!/bin/bash
 # ==============================================================================
-# GSI FLASH & SERVICE TOOL 1.0.3 (Linux)
+# GSI FLASH & SERVICE TOOL (Linux)
 # Flash GSI, manage A/B slots, back up /data, service partitions.
 #
 # Repository: https://codeberg.org/godflesh-77/gsi-tool
@@ -8,7 +8,7 @@
 # License:    MIT
 # ==============================================================================
 
-TOOL_VERSION="1.0.3"
+TOOL_VERSION="1.1.0"
 
 if command -v git >/dev/null 2>&1 && [ -d .git ]; then
     BUILD=$(git rev-parse --short HEAD 2>/dev/null || date +%Y%m%d.%H%M)
@@ -189,6 +189,16 @@ MSG_EN[BackupDone]="Backup OK: %s"
 MSG_EN[BackupFailed]="Backup FAILED. See log:"
 MSG_EN[BackupNo7Zip]="Backup requires 7-Zip. Install 7-Zip 22.00+ and retry."
 
+MSG_EN[PartBackupMenu]="Backup critical partitions (nvram/persist/modemst)"
+MSG_EN[PartBackupTitle]="BACKUP CRITICAL PARTITIONS"
+MSG_EN[PartBackupInfo]="Reads nvram, persist, modemst1/2, fsg, fsc, misc, bluetooth, oem via dd + gzip."
+MSG_EN[PartBackupRootWarn]="Root is required (adb shell id must return uid=0). Use recovery with adb root."
+MSG_EN[PartBackupNoRoot]="ERROR: root required. Cannot read raw partitions."
+MSG_EN[PartBackupNoPart]="Partition not found, skipping: %s"
+MSG_EN[PartBackupProgress]="Reading %s"
+MSG_EN[PartBackupDone]="Backup OK: %s partition(s) -> %s"
+MSG_EN[PartBackupFailed]="Backup FAILED: %s"
+
 MSG_EN[ExitCodeMsg]="Exit code: %s"
 
 MSG_RU[MainMenuTitle]="GSI Flash Tool"
@@ -303,6 +313,16 @@ MSG_RU[BackupProgress]="Бэкап /data"
 MSG_RU[BackupDone]="Бэкап готов: %s"
 MSG_RU[BackupFailed]="Бэкап НЕ УДАЛСЯ. См. лог:"
 MSG_RU[BackupNo7Zip]="Для бэкапа нужен 7-Zip. Установите 7-Zip 22.00+ и повторите."
+
+MSG_RU[PartBackupMenu]="Бэкап критических разделов (nvram/persist/modemst)"
+MSG_RU[PartBackupTitle]="БЭКАП КРИТИЧЕСКИХ РАЗДЕЛОВ"
+MSG_RU[PartBackupInfo]="Читает nvram, persist, modemst1/2, fsg, fsc, misc, bluetooth, oem через dd + gzip."
+MSG_RU[PartBackupRootWarn]="Нужен root (adb shell id должен вернуть uid=0). Используйте recovery с adb root."
+MSG_RU[PartBackupNoRoot]="ОШИБКА: нужен root. Невозможно прочитать raw-разделы."
+MSG_RU[PartBackupNoPart]="Раздел не найден, пропуск: %s"
+MSG_RU[PartBackupProgress]="Чтение %s"
+MSG_RU[PartBackupDone]="Бэкап готов: %s разделов -> %s"
+MSG_RU[PartBackupFailed]="Бэкап НЕ УДАЛСЯ: %s"
 
 MSG_RU[ExitCodeMsg]="Код выхода: %s"
 
@@ -1183,6 +1203,96 @@ backup_data_stream() {
 # ==============================================================================
 # GKI kernels
 # ==============================================================================
+# ==============================================================================
+# Backup critical partitions (nvram/persist/modemst/...) via adb exec-out dd + gzip
+# Requires root (adb shell id → uid=0).
+# ==============================================================================
+backup_critical_partitions() {
+    clear
+    log "=== Backup-CriticalPartitions ==="
+    echo "$(t PartBackupTitle)" >&2
+    echo "$(t PartBackupInfo)"  >&2
+
+    wait_for_adb || { pause; return 1; }
+
+    # Root check
+    local id_out
+    id_out=$(adb_ shell id 2>&1 || true)
+    if [[ "$id_out" != *"uid=0"* ]]; then
+        log_err "root required (id: $id_out)"
+        echo "$(t PartBackupRootWarn)" >&2
+        echo "$(t PartBackupNoRoot)"   >&2
+        pause; return 1
+    fi
+
+    local bdir="$SCRIPT_DIR/backups/partitions_$(date +%Y%m%d_%H%M%S)"
+    mkdir -p "$bdir"
+    log "Partition backup target: $bdir"
+
+    local parts=(nvram persist modemst1 modemst2 fsg fsc misc bluetooth oem)
+    local meta="$bdir/metadata.txt"
+    {
+        echo "Generated: $(date '+%Y-%m-%d %H:%M:%S')"
+        echo "Tool version: $TOOL_VERSION"
+        echo "Serial: ${SERIAL:-(auto)}"
+        echo ""
+        printf "%-12s %14s  %s\n" "Partition" "Size(bytes)" "SHA256"
+    } > "$meta"
+
+    local ok_count=0
+    local p
+
+    for p in "${parts[@]}"; do
+        # existence check
+        local chk
+        chk=$(adb_ shell "[ -e /dev/block/by-name/$p ] && echo YES || echo NO" 2>&1 || true)
+        if [[ "$chk" != *"YES"* ]]; then
+            log_warn "Partition not present: $p"
+            tf PartBackupNoPart "$p" >&2
+            continue
+        fi
+
+        tf PartBackupProgress "$p" >&2
+        local out="$bdir/$p.img.gz"
+        local adb_pipe=()
+        [ -n "$SERIAL" ] && adb_pipe+=("-s" "$SERIAL")
+        adb_pipe+=("exec-out" "dd if=/dev/block/by-name/$p bs=1M 2>/dev/null")
+
+        set -o pipefail
+        adb "${adb_pipe[@]}" 2>>"$LOG" | gzip -9 > "$out"
+        local pipe_rc=("${PIPESTATUS[@]}")
+        set +o pipefail
+        local adb_rc=${pipe_rc[0]:-1}
+        local gz_rc=${pipe_rc[1]:-1}
+        if [ "$adb_rc" -ne 0 ] || [ "$gz_rc" -ne 0 ]; then
+            log_err "dd/gzip failed for $p (adb=$adb_rc gz=$gz_rc)"
+            rm -f "$out"
+            continue
+        fi
+        local csz
+        csz=$(stat -c%s "$out" 2>/dev/null || echo 0)
+        if [ "$csz" -eq 0 ]; then
+            log_warn "Zero bytes for $p"
+            rm -f "$out"
+            continue
+        fi
+
+        local sha
+        sha=$(sha256sum "$out" | awk '{print $1}')
+        log "Backup OK: $p -> $out ($csz gz, sha=$sha)"
+        printf "%-12s %14s  %s\n" "$p.gz" "$csz" "$sha" >> "$meta"
+        ok_count=$((ok_count+1))
+    done
+
+    log "Metadata written: $meta"
+    if [ "$ok_count" -gt 0 ]; then
+        tf PartBackupDone "$ok_count" "$bdir" >&2
+    else
+        tf PartBackupFailed "no partitions backed up" >&2
+    fi
+    pause
+}
+
 flash_gki_cores() {
     clear
     log "=== Install-GkiKernels ==="
@@ -1287,6 +1397,7 @@ show_service_menu() {
     echo "  1. $(t Backing)" >&2
     echo "  2. $(t FlashingGki)" >&2
     echo "  3. $(t EmergencyFix)" >&2
+    echo "  4. $(t PartBackupMenu)" >&2
     echo "  0. $(t Back)" >&2
     local raw
     read -rp "$(t Input)" raw
@@ -1381,6 +1492,7 @@ while true; do
                         1) backup_data_stream ;;
                         2) flash_gki_cores ;;
                         3) emergency_slot_fix ;;
+                        4) backup_critical_partitions ;;
                         *) log "Unknown service choice: [$s]" ;;
                     esac
                 done

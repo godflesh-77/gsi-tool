@@ -1,21 +1,26 @@
 # TODO
 
 ## Идеи (не срочно)
-- [ ] Флаг `-Admin` для Windows (запуск с повышением прав)
+- [ ] Флаг `-Admin` для Windows (сделано в 1.1.0)
 - [ ] Автоматическая проверка обновлений скрипта через Codeberg API
 - [ ] Экспорт отчёта о прошивке в JSON
 
-## 1.1.0
+## 1.2.0
 - [ ] DSU Sideloader integration — запуск второй GSI без изменения слотов
 - [ ] Клон слота A → B — дублирование system/vendor/boot/dtbo
 - [ ] Auto-defragment super — дефрагментация контейнера super через lptools
 - [ ] `lpmake` on-device — пересборка super на устройстве, если GSI не влезает
 - [ ] Унификация логики бэкапа между `.sh` и `.ps1` (единый формат архива)
-- [ ] Mac-поддержка (Darwin, gtimeout, gstat, gdf, gsha256sum) или отдельная ветка
-- [ ] Backup critical partitions (nvram / persist / modemst) через dd из recovery
 - [ ] `set -u` в Linux (после аудита всех переменных)
 - [ ] Объединение helper-вызовов в `super_prep` (Linux)
-- [ ] Финальный smoke-тест на живом GSI (Lunaris) + публикация репо
+- [ ] Финальный smoke-тест на живом GSI (Lunaris)
+
+## Выполнено в 1.1.0 (2026-10-15)
+- [x] Флаг `-Admin` для Windows — само-перезапуск через UAC с пробросом аргументов
+- [x] Детект Windows Terminal в `.cmd` launcher
+- [x] Бэкап критических разделов — nvram/persist/modemst/fsg/fsc/misc/bluetooth/oem через `adb exec-out dd | gzip`
+- [x] README, раздел «Связанные документы» со ссылками на RU-доки
+- [x] macOS-поддержка убрана из планов
 
 ## Выполнено в 1.0.3 (2026-10-10)
 - [x] Fix: `.sh` меню не матчило ввод (ANSI-escapes от `clear` попадали в `$c`)

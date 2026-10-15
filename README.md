@@ -25,6 +25,7 @@ Cross-platform utility for flashing Generic System Images (GSI), managing slots,
   - Windows — `adb exec-out` → 64 KB buffered loop → `7z -si` (progress via `Write-Progress`)
   - Linux — `adb exec-out` → `pv` → `lz4`/`gzip` (fast path with `pv` + `lz4` if installed)
 - **IMEI / MAC / Widevine warning** during `/data` backup — those live in `/persist`, `/nvram`, `/modemst*`, `/misc`, not in `/data`
+- **Critical partitions backup** — reads `nvram`, `persist`, `modemst1/2`, `fsg`, `fsc`, `misc`, `bluetooth`, `oem` via `adb exec-out dd` + gzip (requires root)
 - **GKI kernel flashing** (`boot` + `vendor_boot`) into the active slot
 - **Emergency restore** — dual-write kernels into both slots + `set_active a`
 - **Full logging** of every operation into `logs/`
@@ -85,7 +86,8 @@ Cross-platform utility for flashing Generic System Images (GSI), managing slots,
 | `-Lang en\|ru` / `--lang=en\|ru` | Force UI language (default: auto from `$PSUICulture` / `$LANG`) |
 | `-Serial <serial>` / `--serial=<serial>` | Target a specific device when multiple are connected |
 | `-StrictVersions` / `--strict-versions` | Hard-fail on any version problem, including "version unparseable" |
-| `-Version` / `--version` / `-v` | Print version (`1.0.3`, without build suffix) |
+| `-Version` / `--version` / `-v` | Print version |
+| `-Admin` (PS only) | Self-relaunch elevated via UAC (useful when `logs/` needs admin rights) |
 | `-Help` / `--help` / `-h` | Print help |
 
 **Examples:**
@@ -93,6 +95,14 @@ Cross-platform utility for flashing Generic System Images (GSI), managing slots,
 PowerShell: `.\gsi-tool.cmd -Serial ABC123 -StrictVersions`
 
 Bash: `./gsi-tool.sh --serial=ABC123 --strict-versions`
+
+---
+
+## Related documents
+
+- [CHANGELOG](CHANGELOG.md) · [CHANGELOG (RU)](CHANGELOG.ru.md)
+- [Roadmap](ROADMAP.md) · [Roadmap (RU)](ROADMAP.ru.md)
+- [TODO](TODO.md) · [TODO (RU)](TODO.ru.md)
 
 ---
 

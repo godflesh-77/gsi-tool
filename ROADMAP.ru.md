@@ -1,5 +1,13 @@
 # Roadmap
 
+## Выполнено в 1.1.0 (2026-10-15)
+- **Флаг `-Admin` (Windows)** — само-перезапуск через UAC с пробросом аргументов.
+- **Детект Windows Terminal** в `.cmd` (fallback — обычный PowerShell).
+- **Бэкап критических разделов** — `nvram`, `persist`, `modemst1/2`, `fsg`, `fsc`, `misc`, `bluetooth`, `oem` через `adb exec-out dd | gzip` (нужен root). Результат: `backups/partitions_*/<name>.img.gz` + `metadata.txt` (размеры, SHA256).
+- **README, раздел «Связанные документы»** со ссылками на RU-версии CHANGELOG / ROADMAP / TODO.
+- **Codeberg теперь основной репозиторий**, GitHub — зеркало только для чтения.
+- **macOS-поддержка убрана** из планов.
+
 ## Выполнено в 1.0.3 (2026-10-10)
 - **Hotfix (Linux)**: три дефекта, найденных в 1.0.2:
   - меню не матчило ввод (ANSI-escapes от `clear` попадали в `$c`)
@@ -50,21 +58,19 @@
 - Защита от `set_active` в fastbootd на MTK
 - Size check при выборе системного образа
 
-## 1.1.0
+## 1.2.0
 - **DSU Sideloader integration** — запуск второй GSI без изменения слотов.
 - **Клон слота A → B** — дублирование `system`/`vendor`/`boot`/`dtbo` для безопасных экспериментов.
 - **Auto-defragment super** — дефрагментация контейнера `super` через `lptools`.
 - **`lpmake` on-device** — пересборка super на устройстве, если GSI не влезает после delete.
 - **Унификация логики бэкапа** между `.sh` и `.ps1` (единый формат архива).
-- **Mac-поддержка** (`uname -m` Darwin, `gtimeout`, `gstat`, `gdf`, `gsha256sum`).
-- **Backup critical partitions** — nvram / persist / modemst через `dd` из recovery.
 - **`set -u` в Linux** — после аудита всех переменных.
 - **Объединение helper-вызовов** в `super_prep` (Linux).
+- **Финальный smoke-тест** на живом GSI (Lunaris) перед публикацией.
 
 ## 2.0.0 (идеи)
 - GUI-обёртка (Electron / Tauri) для Windows и Linux.
 - Поддержка не-A/B устройств (A-only) с автоматическим определением.
 - Интеграция с Codeberg (Forgejo) Releases для автоматической загрузки GSI.
 - Экспорт отчёта о прошивке в JSON / HTML.
-- Флаг `-Admin` для Windows (запуск с повышением прав).
 - Автоматическая проверка обновлений скрипта через Codeberg API.
