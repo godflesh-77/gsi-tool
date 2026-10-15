@@ -6,6 +6,9 @@
 
 [English](README.md) | [Русский](README.ru.md)
 
+> **Основной репозиторий:** [codeberg.org/godflesh-77/gsi-tool](https://codeberg.org/godflesh-77/gsi-tool)
+> GitHub ([godflesh-77/gsi-tool](https://github.com/godflesh-77/gsi-tool)) — зеркало только для чтения.
+
 ---
 
 ## Возможности
@@ -16,7 +19,7 @@
 - **Sparse-aware** определение реального размера образа (raw vs sparse)
 - **Автоматическая реконструкция `super`** — удаление `system`/`product`/`system_ext` в обоих слотах с пересозданием нужного раздела (+4096 align +256 МБ margin)
 - **Не трогает** `vendor`, `odm`, `vendor_dlkm`, `system_dlkm` — критично для GKI-устройств
-- **SHA256-верификация** образа перед прошивкой: из файла `<image>.sha256` или интерактивный ввод хеша из GitHub
+- **SHA256-верификация** образа перед прошивкой: из файла `<image>.sha256` или интерактивный ввод хеша со страницы релиза
 - **Автоматическая распаковка** `.img.xz` / `.img.gz` / `.img.zst` (Linux — с прогресс-баром через `pv`, если установлен)
 - **Бэкап `/data`** через ADB-стрим на обеих платформах:
   - Windows — `adb exec-out` → буферный цикл 64 КБ → `7z -si` (прогресс через `Write-Progress`)
@@ -50,11 +53,11 @@
 
 ---
 
-## Установка
+## Использование
 
 ### Windows
 
-1. Скачайте релиз `gsi-tool-<version>.zip` со страницы [Releases](../../releases).
+1. Скачайте релиз `gsi-tool-<version>.zip` со страницы [Releases](https://codeberg.org/godflesh-77/gsi-tool/releases).
 2. Распакуйте в любую папку.
 3. Убедитесь, что `adb.exe` и `fastboot.exe` доступны либо в `PATH`, либо лежат в той же папке.
 4. Скачайте [7-Zip 22.00+](https://www.7-zip.org/) и положите `7z.exe` + `7z.dll` рядом со скриптом (или установите 7-Zip в `Program Files`).

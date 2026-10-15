@@ -4,6 +4,12 @@ All notable changes to GSI Flash Tool are documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning: [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+- **Development moved to Codeberg** — https://codeberg.org/godflesh-77/gsi-tool.
+  GitHub (https://github.com/godflesh-77/gsi-tool) is now a read-only mirror.
+
 ## [1.0.3] — 2026-10-10
 
 **Hotfix (Linux).** Found in 1.0.2: the menu did not respond to input —

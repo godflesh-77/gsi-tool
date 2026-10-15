@@ -3,7 +3,8 @@
 # GSI FLASH & SERVICE TOOL 1.0.3 (Linux)
 # Flash GSI, manage A/B slots, back up /data, service partitions.
 #
-# Repository: https://github.com/godflesh-77/gsi-tool
+# Repository: https://codeberg.org/godflesh-77/gsi-tool
+# Mirror:     https://github.com/godflesh-77/gsi-tool (read-only)
 # License:    MIT
 # ==============================================================================
 
@@ -149,7 +150,7 @@ MSG_EN[CreateFailed2]="super left without system/product/system_ext. DO NOT REBO
 
 MSG_EN[ShaHeader]="SHA256 VERIFICATION:"
 MSG_EN[ShaFileFound]="[INFO] Found .sha256 file."
-MSG_EN[ShaPrompt]="Copy SHA256 hash from GitHub release and paste here (or Enter to skip)."
+MSG_EN[ShaPrompt]="Copy SHA256 hash from the release page and paste here (or Enter to skip)."
 MSG_EN[ShaPromptShort]="Hash"
 MSG_EN[ShaOk]="[SHA256] OK."
 MSG_EN[ShaSkipNoHash]="[SHA256] Hash not recognized. Skipping."
@@ -264,7 +265,7 @@ MSG_RU[CreateFailed2]="super остался без system/product/system_ext. Н
 
 MSG_RU[ShaHeader]="ПРОВЕРКА SHA256:"
 MSG_RU[ShaFileFound]="[INFO] Найден файл .sha256."
-MSG_RU[ShaPrompt]="Скопируйте SHA256 из GitHub-релиза и вставьте сюда (или Enter — пропустить)."
+MSG_RU[ShaPrompt]="Скопируйте SHA256 со страницы релиза и вставьте сюда (или Enter — пропустить)."
 MSG_RU[ShaPromptShort]="Hash"
 MSG_RU[ShaOk]="[SHA256] OK."
 MSG_RU[ShaSkipNoHash]="[SHA256] Хеш не распознан. Пропуск."

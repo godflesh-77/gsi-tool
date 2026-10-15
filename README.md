@@ -6,6 +6,9 @@ Cross-platform utility for flashing Generic System Images (GSI), managing slots,
 
 [English](README.md) | [Русский](README.ru.md)
 
+> **Development repository:** [codeberg.org/godflesh-77/gsi-tool](https://codeberg.org/godflesh-77/gsi-tool)
+> GitHub ([godflesh-77/gsi-tool](https://github.com/godflesh-77/gsi-tool)) is a read-only mirror.
+
 ---
 
 ## Features
@@ -16,7 +19,7 @@ Cross-platform utility for flashing Generic System Images (GSI), managing slots,
 - **Sparse-aware** image size detection (raw vs sparse)
 - **Automatic `super` reconstruction** — deletes `system`/`product`/`system_ext` in both slots and recreates the target partition (4096-align + 256 MB margin)
 - **Never touches** `vendor`, `odm`, `vendor_dlkm`, `system_dlkm` — critical for GKI devices
-- **SHA256 verification** before flashing: from `<image>.sha256` file or interactive hash input from GitHub
+- **SHA256 verification** before flashing: from `<image>.sha256` file or interactive hash input from the release page
 - **Automatic decompression** of `.img.xz` / `.img.gz` / `.img.zst` (Linux: with `pv` progress bar if available)
 - **`/data` backup** via ADB stream on both platforms:
   - Windows — `adb exec-out` → 64 KB buffered loop → `7z -si` (progress via `Write-Progress`)
@@ -50,11 +53,11 @@ Cross-platform utility for flashing Generic System Images (GSI), managing slots,
 
 ---
 
-## Installation
+## Usage
 
 ### Windows
 
-1. Download `gsi-tool-<version>.zip` from the [Releases](../../releases) page.
+1. Download `gsi-tool-<version>.zip` from the [Releases](https://codeberg.org/godflesh-77/gsi-tool/releases) page.
 2. Extract to any folder.
 3. Make sure `adb.exe` and `fastboot.exe` are either in `PATH` or in the same folder as the script.
 4. Download [7-Zip 22.00+](https://www.7-zip.org/) and put `7z.exe` + `7z.dll` next to the script (or install 7-Zip to `Program Files`).

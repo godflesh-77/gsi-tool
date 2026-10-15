@@ -1,14 +1,8 @@
-
----
-
-## `TODO.md` — v1.0.1
-
-```markdown
 # TODO
 
 ## Идеи (не срочно)
 - [ ] Флаг `-Admin` для Windows (запуск с повышением прав)
-- [ ] Автоматическая проверка обновлений скрипта через GitHub API
+- [ ] Автоматическая проверка обновлений скрипта через Codeberg API
 - [ ] Экспорт отчёта о прошивке в JSON
 
 ## 1.1.0
@@ -23,14 +17,25 @@
 - [ ] Объединение helper-вызовов в `super_prep` (Linux)
 - [ ] Финальный smoke-тест на живом GSI (Lunaris) + публикация репо
 
+## Выполнено в 1.0.3 (2026-10-10)
+- [x] Fix: `.sh` меню не матчило ввод (ANSI-escapes от `clear` попадали в `$c`)
+- [x] Fix: 7-Zip version unknown = ложный warning на Linux (баннер идёт в stderr)
+- [x] Fix: `logs/` и `backups/` создавались относительно CWD, а не папки скрипта (`SCRIPT_DIR`)
+
+## Выполнено в 1.0.2 (2026-10-09)
+- [x] Fix: `.ps1` `Backup-DataStream` не проверял `adb.ExitCode`
+- [x] Fix: `.ps1` утечка handle'ов при сбое бэкапа (`.Dispose()` в catch)
+- [x] Fix: `.sh` `PIPESTATUS[0]` проверял только adb, не lz4/gzip
+- [x] Fix: `.sh` 0-byte архив не удалялся
+
 ## Выполнено в 1.0.1 (2026-10-09)
-- [x] Fix: `Get-FastbootVar` в `.ps1` не пробрасывал `-s Serial` → `getvar` уходил на случайное устройство
-- [x] Fix: `Wait-Adb` / `Wait-Fastboot` в `.ps1` не пробрасывали `-s Serial`
-- [x] Fix: `Test-ToolVersions` (обе платформы) не увеличивал счётчик проблем при «version unknown»
-- [x] Fix: `.sh` бэкап без таймаута — добавлен `BACKUP_TIMEOUT=3600` + `timeout` вокруг `adb exec-out`
-- [x] Fix: `.sh` probe `tar --exclude` не отличал «tar без --exclude» от «adb отвалился»
+- [x] Fix: `.ps1` `Get-FastbootVar` не пробрасывал `-s Serial`
+- [x] Fix: `.ps1` `Wait-Adb` / `Wait-Fastboot` не пробрасывали `-s Serial`
+- [x] Fix: `Test-ToolVersions` не считал «version unknown» проблемой
+- [x] Fix: `.sh` бэкап без таймаута (`BACKUP_TIMEOUT=3600` добавлен)
+- [x] Fix: `.sh` probe `tar --exclude` не отличал adb-fail от no-support
 - [x] Fix: `.sh` `resolve_system_image` не показывал `UnpackFailed` пользователю
-- [x] Унифицированные шапки `.sh` / `.ps1` / `.cmd` (репо, лицензия, назначение)
+- [x] Унифицированные шапки `.sh` / `.ps1` / `.cmd`
 - [x] Предупреждение про IMEI / MAC / Widevine при бэкапе `/data`
 - [x] Прогресс-бар распаковки через `pv` в `.sh`
 

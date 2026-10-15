@@ -3,7 +3,8 @@ rem ============================================================================
 rem  GSI FLASH & SERVICE TOOL 1.0.3 (launcher)
 rem  Flash GSI, manage A/B slots, back up /data, service partitions.
 rem
-rem  Repository: https://github.com/godflesh-77/gsi-tool
+rem  Repository: https://codeberg.org/godflesh-77/gsi-tool
+rem  Mirror:     https://github.com/godflesh-77/gsi-tool (read-only)
 rem  License:    MIT
 rem ============================================================================
 chcp 65001 >nul

@@ -64,7 +64,7 @@
 ## 2.0.0 (ideas)
 - GUI wrapper (Electron / Tauri) for Windows and Linux.
 - Support for non-A/B devices (A-only) with auto-detection.
-- GitHub Releases integration for automatic GSI download.
+- Codeberg (Forgejo) Releases integration for automatic GSI download.
 - Export flash report to JSON / HTML.
 - `-Admin` flag for Windows (run elevated).
-- Automatic script update check via GitHub API.
+- Codeberg (Forgejo) Releases integration for automatic GSI download.

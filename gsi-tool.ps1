@@ -2,7 +2,8 @@
 # GSI FLASH & SERVICE TOOL 1.0.3 (PowerShell edition)
 # Flash GSI, manage A/B slots, back up /data, service partitions.
 #
-# Repository: https://github.com/godflesh-77/gsi-tool
+# Repository: https://codeberg.org/godflesh-77/gsi-tool
+# Mirror:     https://github.com/godflesh-77/gsi-tool (read-only)
 # License:    MIT
 # ==============================================================================
 
@@ -127,7 +128,7 @@ $MSG = @{
 
         ShaHeader       = 'SHA256 VERIFICATION:'
         ShaFileFound    = '[INFO] Found .sha256 file.'
-        ShaPrompt       = 'Copy SHA256 hash from GitHub release and paste here (or Enter to skip).'
+        ShaPrompt       = 'Copy SHA256 hash from the release page and paste here (or Enter to skip).'
         ShaPromptShort  = 'Hash'
         ShaOk           = '[SHA256] OK.'
         ShaSkipNoHash   = '[SHA256] Hash not recognized. Skipping.'
@@ -244,7 +245,7 @@ $MSG = @{
 
         ShaHeader       = 'ПРОВЕРКА SHA256:'
         ShaFileFound    = '[INFO] Найден файл .sha256.'
-        ShaPrompt       = 'Скопируйте SHA256 из GitHub-релиза и вставьте сюда (или Enter — пропустить).'
+        ShaPrompt       = 'Скопируйте SHA256 со страницы релиза и вставьте сюда (или Enter — пропустить).'
         ShaPromptShort  = 'Hash'
         ShaOk           = '[SHA256] OK.'
         ShaSkipNoHash   = '[SHA256] Хеш не распознан. Пропуск.'

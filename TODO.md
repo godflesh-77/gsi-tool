@@ -2,7 +2,7 @@
 
 ## Идеи (не срочно)
 - [ ] Флаг `-Admin` для Windows (запуск с повышением прав)
-- [ ] Автоматическая проверка обновлений скрипта через GitHub API
+- [ ] Automatic script update check via Codeberg API
 - [ ] Экспорт отчёта о прошивке в JSON
 
 ## 1.1.0
