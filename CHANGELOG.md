@@ -8,6 +8,41 @@ Versioning: [SemVer](https://semver.org/).
 
 _(nothing yet)_
 
+## [1.1.1] — 2026-10-23
+
+- **Hotfix.** Review-driven safety and correctness fixes. No new features.
+
+### Fixed
+- **Slot selection broken on Linux.** `sanitize_choice` stripped non-digits, so
+  "flash to specified slot" always fell back to the current slot.
+- **`local` outside a function** in the Linux main loop (switch-slot menu
+  printed an error every time).
+- **Ctrl+C protection actually implemented (Linux).** `trap` on INT refuses
+  interruption while `super` reconstruction (delete/create logical partitions)
+  is in progress. README previously claimed this existed — it did not.
+- **vbmeta flashed before any verification (Windows & Linux).** Split into
+  prepare/flash stages: SHA256 verification and the user's final confirmation
+  now run before vbmeta is touched. All confirmations moved into the
+  bootloader (before the fastbootd reboot), since vbmeta is a physical
+  partition.
+- **tar `--exclude` probe never matched on Windows** (`$?` was interpolated
+  into the probe string) and ran a full `/data` scan on both platforms. Now
+  checked via `tar --help`.
+- **7z unpacked into CWD instead of the image's folder** (`Resolve-SystemImage`).
+- **Linux: images searched in CWD** while logs went to the script dir — the
+  script now `cd`s to its own directory; build hash only taken from the tool's
+  own repo.
+- `erase cache` only on non-A/B devices; `set_active` result checked; `devices`
+  propagates `-s <serial>`; `init_boot` excluded from GSI candidates;
+  `Get-SlotCount` cast hardened.
+- **`set_active` failure now aborts before `reboot`** (both platforms).
+  Previously the device rebooted into a slot whose `system` had just been
+  deleted — guaranteed bootloop on MTK.
+- **`.cmd` pauses only on error.** Success paths already pause inside the
+  script (no double pause); main-menu exit pauses once inside the script.
+- **Linux slot prompt re-asks on invalid input** instead of silently falling
+  back to the current slot.
+
 ## [1.1.0] — 2026-10-15
 
 - **Minor release.** Two new features plus accumulated backlog cleanup.

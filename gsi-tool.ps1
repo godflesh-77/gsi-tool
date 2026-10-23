@@ -40,7 +40,7 @@ if ($Admin -and -not ([Security.Principal.WindowsPrincipal][Security.Principal.W
 }
 # ---------------------------------------------------------------------------
 
-$Script:TOOL_VERSION = '1.1.0'
+$Script:TOOL_VERSION = '1.1.1'
 
 $buildHash = $null
 if (Get-Command git -ErrorAction SilentlyContinue) {
@@ -68,6 +68,8 @@ $Script:ADB_VER         = $null
 $Script:FASTBOOT_VER    = $null
 $Script:SEVENZIP_VER    = $null
 $Script:STRICT_VERSIONS = [bool]$StrictVersions
+$Script:VBMETA_PENDING  = $false   # vbmeta approved, waiting to be flashed
+$Script:IMG_SHA_DONE    = $false   # image hash verified this session
 
 # ==============================================================================
 # i18n
@@ -747,7 +749,9 @@ function Get-CurrentSlot {
 function Get-SlotCount {
     $v = Get-FastbootVar 'slot-count'
     Log "slot-count = $v"
-    if ($v) { return [int]$v }
+    if ($v) {
+        try { return [int]$v } catch { LogWarn "slot-count unparseable: '$v', assuming A/B"; return 2 }
+    }
     return 2
 }
 
@@ -870,7 +874,7 @@ function Invoke-VerifySha256([string]$Path, [string]$Hash) {
 # Select images
 # ==============================================================================
 function Select-SystemImage {
-    $excludePatterns = @('vbmeta','^boot','vendor','recovery','super','dtbo','userdata','metadata','system_dlkm')
+    $excludePatterns = @('vbmeta','^boot','init_boot','vendor','recovery','super','dtbo','userdata','metadata','system_dlkm')
     $all = @()
     foreach ($ext in @('*.img','*.img.xz','*.img.gz','*.img.zst')) {
         $all += @(Get-ChildItem -LiteralPath $PSScriptRoot -Filter $ext -File -ErrorAction SilentlyContinue)
@@ -965,7 +969,8 @@ function Resolve-SystemImage([string]$Path) {
             if (-not (Test-Path -LiteralPath $out)) {
                 Log "Unpacking $($spec.Kind): $Path -> $out"
                 Say ((T 'Unpacking') -f $Path, $out) 'Cyan'
-                & $Script:SEVENZIP x -y -bso0 -bsp1 $Path > $null
+                $destDir = Split-Path -LiteralPath $Path -Parent
+                & $Script:SEVENZIP x -y -bso0 -bsp1 "-o$destDir" $Path > $null
                 if ($LASTEXITCODE -ne 0) {
                     LogErr ((T 'UnpackFailed') -f $spec.Kind)
                     Say ((T 'UnpackFailed') -f $spec.Kind) 'Red'
@@ -976,6 +981,42 @@ function Resolve-SystemImage([string]$Path) {
         }
     }
     return $Path
+}
+
+# ==============================================================================
+# SHA256 verification of the system image (standalone).
+# Runs BEFORE any partition is touched; vbmeta is flashed only after this
+# passes and the user confirms the rebuild.
+# ==============================================================================
+function Invoke-VerifyImageSha([string]$Path) {
+    if ($Script:IMG_SHA_DONE) { Log 'SHA256 already verified this session, skipping'; return $true }
+    Say '--------------------------------------------------------' 'Cyan'
+    Say (T 'ShaHeader') 'Cyan'
+    $userHash = ''
+    if (Test-Path -LiteralPath "${Path}.sha256") {
+        Log 'Found .sha256 file'
+        Say (T 'ShaFileFound') 'Green'
+        $userHash = 'file'
+    } else {
+        Say (T 'ShaPrompt') 'Gray'
+        $userHash = Read-Host -Prompt (T 'ShaPromptShort')
+        Log "SHA256 input: $(if ($userHash) { 'provided' } else { 'skipped' })"
+    }
+    if ($userHash) {
+        $res = Invoke-VerifySha256 $Path $userHash
+        if ($res -match '^mismatch:') {
+            LogErr "SHA256 mismatch: $res"
+            Say (T 'Error') 'Red'
+            Say ((T 'ShaMismatch') -f $res) 'Red'
+            if (-not (Confirm (T 'ShaRiskPrompt'))) { return $false }
+        } elseif ($res -eq 'ok') { Say (T 'ShaOk') 'Green' }
+        elseif ($res -eq 'missing') { Say (T 'ShaSkipNoHash') 'Yellow' }
+        elseif ($res -eq 'error_file_too_large') { Say (T 'ShaSkipTooBig') 'Yellow' }
+        elseif ($res -eq 'error') { Say (T 'ShaSkipErr') 'Yellow' }
+    } else { Say (T 'ShaSkipUser') 'Yellow' }
+    Say '--------------------------------------------------------' 'Cyan'
+    $Script:IMG_SHA_DONE = $true
+    return $true
 }
 
 # ==============================================================================
@@ -1003,42 +1044,13 @@ function Invoke-FreeSuperSpace {
     Log "raw=$rawSize part=$partSize (margin=$($Script:MARGIN_MB)MB)"
     Say ("raw=$rawSize, part=$partSize (margin=$($Script:MARGIN_MB)MB)") 'Gray'
 
-    Say '--------------------------------------------------------' 'Cyan'
-    Say (T 'ShaHeader') 'Cyan'
-    $userHash = ''
-    if (Test-Path -LiteralPath "${SystemImg}.sha256") {
-        Log 'Found .sha256 file'
-        Say (T 'ShaFileFound') 'Green'
-        $userHash = 'file'
-    } else {
-        Say (T 'ShaPrompt') 'Gray'
-        $userHash = Read-Host -Prompt (T 'ShaPromptShort')
-        Log "SHA256 input: $(if ($userHash) { 'provided' } else { 'skipped' })"
-    }
-    if ($userHash) {
-        $res = Invoke-VerifySha256 $SystemImg $userHash
-        if ($res -match '^mismatch:') {
-            LogErr "SHA256 mismatch: $res"
-            Say (T 'Error') 'Red'
-            Say ((T 'ShaMismatch') -f $res) 'Red'
-            if (-not (Confirm (T 'ShaRiskPrompt'))) { return $false }
-        } elseif ($res -eq 'ok') { Say (T 'ShaOk') 'Green' }
-        elseif ($res -eq 'missing') { Say (T 'ShaSkipNoHash') 'Yellow' }
-        elseif ($res -eq 'error_file_too_large') { Say (T 'ShaSkipTooBig') 'Yellow' }
-        elseif ($res -eq 'error') { Say (T 'ShaSkipErr') 'Yellow' }
-    } else { Say (T 'ShaSkipUser') 'Yellow' }
-    Say '--------------------------------------------------------' 'Cyan'
+    if (-not (Invoke-VerifyImageSha $SystemImg)) { return $false }
 
     $tpart = Get-SysPart $Slot
     $opp = if ($Slot -eq 'a') { 'b' } else { 'a' }
 
-    if (-not (Test-Userspace)) {
-        Say (T 'RebootToFb') 'Cyan'
-        Log (T 'NotInFbReboot')
-        [void](Invoke-Fb -Tolerant 'reboot' 'fastboot')
-        if (-not (Wait-Fastboot)) { return $false }
-    }
-
+    # All confirmations happen HERE, while we are still in the bootloader:
+    # vbmeta is a physical partition and cannot be flashed from fastbootd.
     Say '--------------------------------------------------------' 'Cyan'
     Say (T 'RebuildSuper') 'Cyan'
     Say ((T 'TargetPart') -f $tpart) 'Gray'
@@ -1050,6 +1062,15 @@ function Invoke-FreeSuperSpace {
     if ($partSize -gt 4GB) {
         Say (T 'SuperBigWarn') 'Yellow'
         if (-not (Confirm)) { return $false }
+    }
+
+    if (-not (Invoke-VbmetaFlash)) { return $false }
+
+    if (-not (Test-Userspace)) {
+        Say (T 'RebootToFb') 'Cyan'
+        Log (T 'NotInFbReboot')
+        [void](Invoke-Fb -Tolerant 'reboot' 'fastboot')
+        if (-not (Wait-Fastboot)) { return $false }
     }
 
     Log "Deleting logical partitions (system/product/system_ext) in slots $Slot/$opp"
@@ -1081,6 +1102,9 @@ function Invoke-FreeSuperSpace {
 # vbmeta
 # ==============================================================================
 function Confirm-Vbmeta {
+    # PREPARE stage only: checks the file, warns, asks. The actual flashing
+    # happens later in Invoke-VbmetaFlash — after SHA256 verification and
+    # the user's final confirmation of the rebuild.
     $vb = Join-Path $PSScriptRoot 'vbmeta.img'
     if (-not (Test-Path -LiteralPath $vb)) {
         LogWarn 'vbmeta.img not found, asking user'
@@ -1091,11 +1115,21 @@ function Confirm-Vbmeta {
         LogWarn 'In Fastbootd, vbmeta is a physical partition'
         Say (T 'VbInUserspace') 'Yellow'
     }
+    Log "vbmeta.img found ($vb), will flash after image verification"
+    $Script:VBMETA_PENDING = $true
+    return $true
+}
+
+function Invoke-VbmetaFlash {
+    if (-not $Script:VBMETA_PENDING) { return $true }
+    $vb = Join-Path $PSScriptRoot 'vbmeta.img'
     Log "Flashing vbmeta: $vb"
     Say (T 'VbFlashing') 'Cyan'
     if (-not (Invoke-FbFlash '--disable-verity' '--disable-verification' 'flash' 'vbmeta' $vb)) {
+        $Script:VBMETA_PENDING = $false
         return (Confirm (T 'VbContinueNo'))
     }
+    $Script:VBMETA_PENDING = $false
     Log 'vbmeta flashed OK'
     return $true
 }
@@ -1135,7 +1169,7 @@ function Backup-DataStream {
     $excludes = '--exclude=media --exclude=dalvik-cache --exclude=tombstones --exclude=dropbox'
     $probeArgs = @()
     if ($Script:Serial) { $probeArgs += @('-s', $Script:Serial) }
-    $probeArgs += @('shell', "echo ADB_OK; tar $excludes -cf /dev/null -C /data . 2>/dev/null; echo RC=\$?")
+    $probeArgs += @('shell', "echo ADB_OK; if tar --help 2>&1 | grep -q -- '--exclude'; then echo RC=0; else echo RC=1; fi")
     $probeOut = ''
     try { $probeOut = & $Script:ADB_PATH @probeArgs 2>&1 | Out-String } catch { }
     if ($probeOut -notmatch 'ADB_OK') {
@@ -1408,7 +1442,7 @@ function Install-GkiKernels {
     if (Confirm ((T 'FlashToSlot') -f $slot)) {
         if (-not (Invoke-FbFlash 'flash' "boot_$slot" $boot)) { Pause; return }
         if (-not (Invoke-FbFlash 'flash' "vendor_boot_$slot" $vb)) { Pause; return }
-        [void](Invoke-Fb 'erase' 'cache')
+        if (-not $Script:IS_AB) { [void](Invoke-Fb 'erase' 'cache') }
         Log "GKI kernels flashed OK"
     }
     Pause
@@ -1501,14 +1535,27 @@ function Do-Flash {
     $img = $resolved
 
     if ($Mode -eq 'slot') {
-        $slot = Read-Host -Prompt (T 'EnterSlot')
-        if ($slot -notmatch '^[ab]$') { $slot = $Script:CURRENT_SLOT }
+        $slot = $null
+        while (-not $slot) {
+            $r = Read-Host -Prompt (T 'EnterSlot')
+            if ($r -match '^[ab]$') { $slot = $r }
+            elseif ($r -eq '')      { $slot = $Script:CURRENT_SLOT }
+            else                    { Say (T 'InvalidChoice') 'Yellow' }
+        }
         Log "Target slot: $slot"
+        if (-not (Invoke-VerifyImageSha $img)) { return }
         if (-not (Confirm-Vbmeta)) { return }
         if (-not (Invoke-FreeSuperSpace -Slot $slot -SystemImg $img)) { return }
         if (-not (Invoke-FbFlash 'flash' (Get-SysPart $slot) $img)) { return }
-        [void](Invoke-Fb 'erase' 'cache')
-        [void](Invoke-Fb 'set_active' $slot)
+        if (-not $Script:IS_AB) { [void](Invoke-Fb 'erase' 'cache') }
+        if ($Script:IS_AB) {
+            if (-not (Invoke-Fb 'set_active' $slot)) {
+                LogErr "set_active $slot failed (MTK fastbootd?)"
+                Say (T 'SetActiveFail') 'Red'
+                Say '  DO NOT reboot into the flashed slot; switch slot from the bootloader.' 'Yellow'
+                Pause
+            }
+        }
         [void](Invoke-Fb 'reboot')
         Log "Flash OK (slot mode). Exiting."
         Say (T 'FlashOk') 'Green'
@@ -1516,10 +1563,11 @@ function Do-Flash {
         exit 0
     }
     if ($Mode -eq 'update') {
+        if (-not (Invoke-VerifyImageSha $img)) { return }
         if (-not (Confirm-Vbmeta)) { return }
         if (-not (Invoke-FreeSuperSpace -Slot $Script:CURRENT_SLOT -SystemImg $img)) { return }
         if (-not (Invoke-FbFlash 'flash' (Get-SysPart $Script:CURRENT_SLOT) $img)) { return }
-        [void](Invoke-Fb 'erase' 'cache')
+        if (-not $Script:IS_AB) { [void](Invoke-Fb 'erase' 'cache') }
         [void](Invoke-Fb 'reboot')
         Log "Flash OK (update mode). Exiting."
         Say (T 'FlashOk') 'Green'
@@ -1527,6 +1575,7 @@ function Do-Flash {
         exit 0
     }
     if ($Mode -eq 'reset') {
+        if (-not (Invoke-VerifyImageSha $img)) { return }
         if (-not (Confirm-Vbmeta)) { return }
         if (-not (Invoke-FreeSuperSpace -Slot $Script:CURRENT_SLOT -SystemImg $img)) { return }
         [void](Invoke-Fb '-w')
@@ -1591,10 +1640,12 @@ while ($true) {
             '2' { if (Wait-Adb)   { [void](Invoke-Adb 'reboot' 'fastboot'); if (Wait-Fastboot) { $Script:Proceed = $true } } }
             '1' {
                 Log "Devices: adb / fastboot"
+                $dArgs = @()
+                if ($Script:Serial) { $dArgs += @('-s', $Script:Serial) }
                 Say '-- ADB --' 'Cyan'
-                & $Script:ADB_PATH devices
+                if ($Script:ADB_PATH)      { & $Script:ADB_PATH @dArgs devices }      else { Say "  adb: $((T 'ToolMissing'))" 'Red' }
                 Say '-- Fastboot --' 'Cyan'
-                & $Script:FASTBOOT_PATH devices
+                if ($Script:FASTBOOT_PATH) { & $Script:FASTBOOT_PATH @dArgs devices } else { Say "  fastboot: $((T 'ToolMissing'))" 'Red' }
             }
             default { }
         }

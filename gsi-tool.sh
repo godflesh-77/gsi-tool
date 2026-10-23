@@ -8,17 +8,19 @@
 # License:    MIT
 # ==============================================================================
 
-TOOL_VERSION="1.1.0"
+TOOL_VERSION="1.1.1"
 
-if command -v git >/dev/null 2>&1 && [ -d .git ]; then
-    BUILD=$(git rev-parse --short HEAD 2>/dev/null || date +%Y%m%d.%H%M)
+# Determine script directory independent of CWD (matches PS $PSScriptRoot)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+cd "$SCRIPT_DIR" || { echo "Cannot cd to $SCRIPT_DIR" >&2; exit 1; }
+
+# Build hash: only from the tool's own repo, never from a foreign CWD repo
+if command -v git >/dev/null 2>&1 && [ -d "$SCRIPT_DIR/.git" ]; then
+    BUILD=$(git -C "$SCRIPT_DIR" rev-parse --short HEAD 2>/dev/null || date +%Y%m%d.%H%M)
 else
     BUILD=$(date +%Y%m%d.%H%M)
 fi
 FULL_VERSION="${TOOL_VERSION}+build.${BUILD}"
-
-# Determine script directory independent of CWD (matches PS $PSScriptRoot)
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 
 # --------- defaults ---------
 LANG_CODE="en"
@@ -39,6 +41,25 @@ LOG=""
 SELECTED_FILE=""
 SYSTEM_IMG=""
 MENU_CHOICE=""
+IN_CRITICAL=0   # 1 while super reconstruction is in progress (Ctrl+C refused)
+
+# --- Ctrl+C handling ---------------------------------------------------------
+# In critical sections (delete/create logical partitions) SIGINT is refused:
+# interrupting there would leave `super` without system/product/system_ext.
+on_int() {
+    trap on_int INT
+    echo "" >&2
+    if [ "$IN_CRITICAL" -eq 1 ]; then
+        log_err "Ctrl+C refused: critical super operation in progress. Wait for it to finish."
+        echo "Ctrl+C refused: critical super operation in progress." >&2
+        echo "DO NOT power off the device." >&2
+        return
+    fi
+    log "Interrupted by user (Ctrl+C)"
+    exit 130
+}
+trap on_int INT
+# -----------------------------------------------------------------------------
 
 # ==============================================================================
 # CLI flags
@@ -837,7 +858,7 @@ select_system_image() {
     local sys=()
     for f in "${all[@]}"; do
         case "$f" in
-            vbmeta*|boot*|vendor*|recovery*|super*|dtbo*|userdata*|metadata*|system_dlkm*) continue ;;
+            vbmeta*|boot*|init_boot*|vendor*|recovery*|super*|dtbo*|userdata*|metadata*|system_dlkm*) continue ;;
         esac
         [ -f "$f" ] && sys+=("$f")
     done
@@ -961,49 +982,14 @@ resolve_system_image() {
 }
 
 # ==============================================================================
-# vbmeta
+# SHA256 verification of the system image (standalone, runs BEFORE any
+# partition is touched — vbmeta is flashed only after this passes).
 # ==============================================================================
-confirm_vbmeta() {
-    if [ ! -f "vbmeta.img" ]; then
-        log_warn "vbmeta.img not found"
-        echo "$(t VbMissing)" >&2
-        confirm "$(t VbContinueNo)"; return $?
+verify_image_sha() {
+    if [ "$IMG_SHA_DONE" = "1" ]; then
+        log "SHA256 already verified this session, skipping"
+        return 0
     fi
-    if is_userspace; then
-        log_warn "in fastbootd, vbmeta is physical"
-        echo "$(t VbInUserspace)" >&2
-    fi
-    log "Flashing vbmeta"
-    echo "$(t VbFlashing)" >&2
-    if ! fb_flash --disable-verity --disable-verification flash vbmeta vbmeta.img; then
-        confirm "$(t VbContinueNo)"; return $?
-    fi
-    log "vbmeta flashed OK"; return 0
-}
-
-# ==============================================================================
-# Free super space
-# ==============================================================================
-free_super_space() {
-    local slot="${1:-$CURRENT_SLOT}"
-    log "=== free_super_space slot=$slot ==="
-    [ -n "$SYSTEM_IMG" ] && [ -f "$SYSTEM_IMG" ] || { log_err "SYSTEM_IMG not set"; return 1; }
-
-    local integrity
-    integrity=$(test_sparse_integrity "$SYSTEM_IMG")
-    log "Sparse integrity: $integrity"
-    if [[ "$integrity" =~ ^suspect: ]]; then
-        echo "Sparse image looks suspicious: $integrity" >&2
-        confirm "$(t ContinueAnyway)" || return 1
-    fi
-
-    local raw part
-    raw=$(get_image_size "$SYSTEM_IMG")
-    [ "$raw" -le 0 ] && { log_err "Cannot detect image size"; return 1; }
-    part=$(calc_partition_size "$raw")
-    log "raw=$raw part=$part (margin=${MARGIN_MB}MB)"
-    echo "raw=$raw, part=$part (margin=${MARGIN_MB}MB)" >&2
-
     echo "--------------------------------------------------------" >&2
     echo "$(t ShaHeader)" >&2
     local user_hash=""
@@ -1033,18 +1019,79 @@ free_super_space() {
         echo "$(t ShaSkipUser)" >&2
     fi
     echo "--------------------------------------------------------" >&2
+    IMG_SHA_DONE=1
+    return 0
+}
+
+# ==============================================================================
+# vbmeta (two stages):
+#   prepare_vbmeta — runs FIRST: checks file, warns, asks. No flashing.
+#   flash_vbmeta   — runs AFTER SHA256 verification and user confirmation.
+# vbmeta is a physical partition and can only be flashed from the bootloader
+# (not fastbootd), so it is flashed inside free_super_space before the
+# fastbootd reboot.
+# ==============================================================================
+VBMETA_PENDING=0
+IMG_SHA_DONE=0
+
+prepare_vbmeta() {
+    if [ ! -f "vbmeta.img" ]; then
+        log_warn "vbmeta.img not found"
+        echo "$(t VbMissing)" >&2
+        confirm "$(t VbContinueNo)"; return $?
+    fi
+    if is_userspace; then
+        log_warn "in fastbootd, vbmeta is physical"
+        echo "$(t VbInUserspace)" >&2
+    fi
+    log "vbmeta.img found, will flash after image verification"
+    VBMETA_PENDING=1
+    return 0
+}
+
+flash_vbmeta() {
+    [ "$VBMETA_PENDING" -eq 1 ] || return 0
+    log "Flashing vbmeta"
+    echo "$(t VbFlashing)" >&2
+    if ! fb_flash --disable-verity --disable-verification flash vbmeta vbmeta.img; then
+        VBMETA_PENDING=0
+        confirm "$(t VbContinueNo)"; return $?
+    fi
+    VBMETA_PENDING=0
+    log "vbmeta flashed OK"; return 0
+}
+
+# ==============================================================================
+# Free super space
+# ==============================================================================
+free_super_space() {
+    local slot="${1:-$CURRENT_SLOT}"
+    log "=== free_super_space slot=$slot ==="
+    [ -n "$SYSTEM_IMG" ] && [ -f "$SYSTEM_IMG" ] || { log_err "SYSTEM_IMG not set"; return 1; }
+
+    local integrity
+    integrity=$(test_sparse_integrity "$SYSTEM_IMG")
+    log "Sparse integrity: $integrity"
+    if [[ "$integrity" =~ ^suspect: ]]; then
+        echo "Sparse image looks suspicious: $integrity" >&2
+        confirm "$(t ContinueAnyway)" || return 1
+    fi
+
+    local raw part
+    raw=$(get_image_size "$SYSTEM_IMG")
+    [ "$raw" -le 0 ] && { log_err "Cannot detect image size"; return 1; }
+    part=$(calc_partition_size "$raw")
+    log "raw=$raw part=$part (margin=${MARGIN_MB}MB)"
+    echo "raw=$raw, part=$part (margin=${MARGIN_MB}MB)" >&2
+
+    verify_image_sha || return 1
 
     local tpart opp
     tpart=$(sys_part "$slot")
     opp=$([ "$slot" = "a" ] && echo b || echo a)
 
-    if ! is_userspace; then
-        echo "$(t RebootToFb)" >&2
-        log "$(t NotInFbReboot)"
-        fb_tolerant reboot fastboot || true
-        wait_for_fastboot || return 1
-    fi
-
+    # All confirmations happen HERE, while we are still in the bootloader:
+    # vbmeta is a physical partition and cannot be flashed from fastbootd.
     echo "--------------------------------------------------------" >&2
     echo "$(t RebuildSuper)" >&2
     tf TargetPart "$tpart" >&2
@@ -1058,6 +1105,17 @@ free_super_space() {
         confirm || return 1
     fi
 
+    flash_vbmeta || return 1
+
+    if ! is_userspace; then
+        echo "$(t RebootToFb)" >&2
+        log "$(t NotInFbReboot)"
+        fb_tolerant reboot fastboot || true
+        wait_for_fastboot || return 1
+    fi
+
+    # --- critical section: Ctrl+C refused from here until create finishes ---
+    IN_CRITICAL=1
     log "Deleting system/product/system_ext in slots $slot/$opp"
     if [ "$IS_AB_DEVICE" = "yes" ]; then
         for s in "$slot" "$opp"; do
@@ -1074,11 +1132,13 @@ free_super_space() {
     log "Creating $tpart size=$part"
     echo "Creating $tpart ($part bytes)..." >&2
     if ! fb create-logical-partition "$tpart" "$part"; then
+        IN_CRITICAL=0
         log_err "create-logical-partition failed"
         echo "$(t CreateFailed)" >&2
         echo "$(t CreateFailed2)" >&2
         return 1
     fi
+    IN_CRITICAL=0
     log "Partition $tpart recreated: $part bytes"
     return 0
 }
@@ -1109,7 +1169,7 @@ backup_data_stream() {
     local excludes="--exclude=media --exclude=dalvik-cache --exclude=tombstones --exclude=dropbox"
     local parr=()
     [ -n "$SERIAL" ] && parr+=("-s" "$SERIAL")
-    parr+=("shell" "echo ADB_OK; tar $excludes -cf /dev/null -C /data . >/dev/null 2>&1; echo RC=\$?")
+    parr+=("shell" "echo ADB_OK; if tar --help 2>&1 | grep -q -- '--exclude'; then echo RC=0; else echo RC=1; fi")
     local pout
     pout=$(timeout 20 adb "${parr[@]}" 2>&1 | tr -d '\r' || true)
     if [[ ! "$pout" =~ ADB_OK ]]; then
@@ -1137,7 +1197,7 @@ backup_data_stream() {
     if command -v pv >/dev/null 2>&1 && command -v lz4 >/dev/null 2>&1; then
         set -o pipefail
         timeout "$BACKUP_TIMEOUT" adb "${sarr[@]}" 2>>"$LOG" | pv -N "$(t BackupProgress)" | lz4 -9 > "${bfile}.tar.lz4"
-        rc_array=("${PIPESTATUS[@]}")
+        local rc_array=("${PIPESTATUS[@]}")
         set +o pipefail
         local adb_rc=${rc_array[0]}
         local pv_rc=${rc_array[1]}
@@ -1168,7 +1228,7 @@ backup_data_stream() {
     else
         set -o pipefail
         timeout "$BACKUP_TIMEOUT" adb "${sarr[@]}" 2>>"$LOG" | gzip -9 > "${bfile}.tar.gz"
-        rc_array=("${PIPESTATUS[@]}")
+        local rc_array=("${PIPESTATUS[@]}")
         set +o pipefail
         local adb_rc=${rc_array[0]}
         local gz_rc=${rc_array[1]}
@@ -1318,7 +1378,7 @@ flash_gki_cores() {
     if [[ "$c" =~ ^[Yy]$ ]]; then
         fb_flash flash "boot_$slot"        "$boot_file"   || { pause; return 1; }
         fb_flash flash "vendor_boot_$slot" "$vendor_file" || { pause; return 1; }
-        fb erase cache || true
+        [ "$IS_AB_DEVICE" = "yes" ] || fb erase cache || true
         log "GKI kernels flashed OK"
     fi
     pause
@@ -1421,29 +1481,38 @@ do_flash() {
         slot)
             local sc
             read -rp "$(t EnterSlot)" sc
-            sc=$(sanitize_choice "$sc")
+            # sanitize for slot letters only (sanitize_choice strips non-digits!)
+            sc=$(printf '%s' "$sc" | tr -d '[:space:]' | tr 'A-B' 'a-b' | cut -c1)
             [[ ! "$sc" =~ ^[ab]$ ]] && sc="$CURRENT_SLOT"
             log "Target slot: $sc"
-            confirm_vbmeta || return
+            verify_image_sha || return
+            prepare_vbmeta || return
             free_super_space "$sc" || return
             fb_flash flash "$(sys_part "$sc")" "$SYSTEM_IMG" || return
-            fb erase cache || true
-            [ "$IS_AB_DEVICE" = "yes" ] && fb set_active "$sc" || true
+            [ "$IS_AB_DEVICE" = "yes" ] || fb erase cache || true
+            if [ "$IS_AB_DEVICE" = "yes" ] && ! fb set_active "$sc"; then
+                log_err "set_active $sc failed (MTK fastbootd?)"
+                echo "$(t SetActiveFail)" >&2
+                echo "DO NOT reboot into the flashed slot; switch slot from the bootloader." >&2
+                pause
+            fi
             fb reboot
             log "Flash OK (slot). Exiting."
             echo "$(t FlashOk)"; pause; exit 0
             ;;
         update)
-            confirm_vbmeta || return
+            verify_image_sha || return
+            prepare_vbmeta || return
             free_super_space "$CURRENT_SLOT" || return
             fb_flash flash "$(sys_part "$CURRENT_SLOT")" "$SYSTEM_IMG" || return
-            fb erase cache || true
+            [ "$IS_AB_DEVICE" = "yes" ] || fb erase cache || true
             fb reboot
             log "Flash OK (update). Exiting."
             echo "$(t FlashOk)"; pause; exit 0
             ;;
         reset)
-            confirm_vbmeta || return
+            verify_image_sha || return
+            prepare_vbmeta || return
             free_super_space "$CURRENT_SLOT" || return
             fb -w || true
             fb_flash flash "$(sys_part "$CURRENT_SLOT")" "$SYSTEM_IMG" || return
@@ -1501,7 +1570,12 @@ while true; do
             4) wait_for_fastboot && { fb_tolerant reboot fastboot; wait_for_fastboot && PROCEED=1; } ;;
             3) wait_for_adb && { adb_ reboot fastboot; wait_for_fastboot && PROCEED=1; } ;;
             2) wait_for_adb && { adb_ reboot fastboot; wait_for_fastboot && PROCEED=1; } ;;
-            1) echo "-- ADB --" >&2; adb devices; echo "-- Fastboot --" >&2; fastboot devices ;;
+            1)
+                echo "-- ADB --" >&2
+                if [ -n "$SERIAL" ]; then adb -s "$SERIAL" devices; else adb devices; fi
+                echo "-- Fastboot --" >&2
+                if [ -n "$SERIAL" ]; then fastboot -s "$SERIAL" devices; else fastboot devices; fi
+                ;;
             *) log "Unknown main menu choice: [$c]" ;;
         esac
         [ $PROCEED -eq 0 ] && pause
@@ -1520,7 +1594,6 @@ while true; do
             0) log "Back to main menu"; BACK=1 ;;
             4)
                 if [ "$IS_AB_DEVICE" != "yes" ]; then echo "$(t NotAb)" >&2; pause; continue; fi
-                local new
                 new=$([ "$CURRENT_SLOT" = "a" ] && echo b || echo a)
                 if is_userspace; then
                     log_warn "set_active in fastbootd: may fail on MTK"

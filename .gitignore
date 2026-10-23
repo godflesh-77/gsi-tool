@@ -28,6 +28,7 @@ AdbWinApi.dll
 AdbWinUsbApi.dll
 7z.exe
 7z.dll
+*.patch
 
 # --- OS junk ---
 .DS_Store
