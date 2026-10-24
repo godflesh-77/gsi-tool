@@ -21,6 +21,10 @@ backups/
 *.tar.lz4
 *.7z
 
+# --- Local dev tools ---
+arc.sh
+*.patch
+
 # --- Local tool binaries (обычно из platform-tools / 7-Zip) ---
 adb.exe
 fastboot.exe
@@ -28,7 +32,6 @@ AdbWinApi.dll
 AdbWinUsbApi.dll
 7z.exe
 7z.dll
-*.patch
 
 # --- OS junk ---
 .DS_Store

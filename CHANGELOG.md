@@ -8,6 +8,22 @@ Versioning: [SemVer](https://semver.org/).
 
 _(nothing yet)_
 
+## [1.1.2] — 2026-10-24
+
+- **Hotfix.** CLI argument parsing parity between platforms. No new features.
+
+### Fixed
+- **Linux: unknown CLI flags were silently ignored.** A typo like
+  `--strcit-versions` (or any unrecognized flag) was treated as "no flag"
+  and the script ran in normal mode. Now an unknown flag prints an error
+  and exits with code 1.
+- **Linux: Windows-style flags were rejected.** `-Version`, `-Help`,
+  `-Lang=`, `-Serial=`, `-StrictVersions` now work in bash just like in
+  PowerShell (previously only the `--` / short forms were recognized,
+  despite what README implied).
+- **`--lang` / `--serial` parsing simplified.** Value extraction now
+  uses `${arg#*=}` (works for both `-Flag=value` and `--flag=value`).
+
 ## [1.1.1] — 2026-10-23
 
 - **Hotfix.** Review-driven safety and correctness fixes. No new features.

@@ -8,7 +8,7 @@
 # License:    MIT
 # ==============================================================================
 
-TOOL_VERSION="1.1.1"
+TOOL_VERSION="1.1.2"
 
 # Determine script directory independent of CWD (matches PS $PSScriptRoot)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
@@ -66,16 +66,21 @@ trap on_int INT
 # ==============================================================================
 for arg in "$@"; do
     case "$arg" in
-        --version|-v) echo "$TOOL_VERSION"; exit 0 ;;
-        --help|-h)
+        -Version|--version|-v) echo "$TOOL_VERSION"; exit 0 ;;
+        -Help|--help|-h)
             echo "GSI Flash Tool $TOOL_VERSION"
             echo "Build: $BUILD"
             echo "Usage: $0 [--lang=en|ru] [--serial=<serial>] [--strict-versions] [--version] [--help]"
             exit 0
             ;;
-        --lang=*)          FORCE_LANG="${arg#--lang=}" ;;
-        --serial=*)        SERIAL="${arg#--serial=}" ;;
-        --strict-versions) STRICT_VERSIONS="yes" ;;
+        -Lang=*|--lang=*)          FORCE_LANG="${arg#*=}" ;;
+        -Serial=*|--serial=*)      SERIAL="${arg#*=}" ;;
+        -StrictVersions|--strict-versions) STRICT_VERSIONS="yes" ;;
+        *)
+            echo "Unknown option: $arg" >&2
+            echo "Run '$0 --help' for usage." >&2
+            exit 1
+            ;;
     esac
 done
 
