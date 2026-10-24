@@ -10,19 +10,19 @@ _(nothing yet)_
 
 ## [1.1.2] — 2026-10-24
 
-- **Hotfix.** CLI argument parsing parity between platforms. No new features.
+- **Hotfix.** CLI flag parity between platforms. No flashing-logic changes.
 
 ### Fixed
-- **Linux: unknown CLI flags were silently ignored.** A typo like
-  `--strcit-versions` (or any unrecognized flag) was treated as "no flag"
-  and the script ran in normal mode. Now an unknown flag prints an error
-  and exits with code 1.
-- **Linux: Windows-style flags were rejected.** `-Version`, `-Help`,
-  `-Lang=`, `-Serial=`, `-StrictVersions` now work in bash just like in
-  PowerShell (previously only the `--` / short forms were recognized,
-  despite what README implied).
-- **`--lang` / `--serial` parsing simplified.** Value extraction now
-  uses `${arg#*=}` (works for both `-Flag=value` and `--flag=value`).
+- **Linux CLI flags now match Windows and README.** `-Version`, `-Help`,
+  `-Serial <id>` (both `-Serial X` and `-Serial=X`), `-Lang ru|en` (both
+  forms) and `-StrictVersions` are accepted on both platforms. Previously
+  bash only understood `--version/--help/--serial=...` style, while README
+  documented the `-Version/-Help/-Serial/-StrictVersions` names without a
+  platform note — on Linux those names were silently ignored.
+- **Unknown options are now an explicit error** (`exit 1`) instead of being
+  silently swallowed — a typo such as `--strcit-versions` previously ran the
+  tool as if no flag was given at all.
+
 
 ## [1.1.1] — 2026-10-23
 
@@ -51,12 +51,16 @@ _(nothing yet)_
 - `erase cache` only on non-A/B devices; `set_active` result checked; `devices`
   propagates `-s <serial>`; `init_boot` excluded from GSI candidates;
   `Get-SlotCount` cast hardened.
-- **`set_active` failure now aborts before `reboot`** (both platforms).
-  Previously the device rebooted into a slot whose `system` had just been
-  deleted — guaranteed bootloop on MTK.
-- **`.cmd` pauses only on error.** Success paths already pause inside the
-  script (no double pause); main-menu exit pauses once inside the script.
-- **Linux slot prompt re-asks on invalid input** instead of silently falling
+- **Clean exit to shell (Linux).** On exit and on Ctrl+C the INT trap is
+  reset and `stty sane` is restored (terminal no longer hangs returning to
+  bash/fish); `adb`/`fastboot`/`7z`/`zstd` version checks and the device-list
+  menu run with stdin detached from the terminal (`</dev/null`);
+  `adb kill-server` on exit releases any adb server still holding terminal fds.
+- **1.1.1 integration fixes.** `set_active` failure now aborts before
+  `reboot` (the device previously rebooted into a slot whose system had just
+  been deleted); `.cmd` pauses only on error — success paths already pause
+  inside the script (double pause removed, menu exit still pauses);
+  Linux slot prompt re-asks on invalid input instead of silently falling
   back to the current slot.
 
 ## [1.1.0] — 2026-10-15

@@ -1554,6 +1554,7 @@ function Do-Flash {
                 Say (T 'SetActiveFail') 'Red'
                 Say '  DO NOT reboot into the flashed slot; switch slot from the bootloader.' 'Yellow'
                 Pause
+                return
             }
         }
         [void](Invoke-Fb 'reboot')
@@ -1620,7 +1621,7 @@ while ($true) {
     while (-not $Script:Proceed) {
         $c = Show-MainMenu
         switch ($c) {
-            '0' { Log 'Exit from main menu'; exit 0 }
+            '0' { Log 'Exit from main menu'; Pause; exit 0 }
             '6' {
                 while ($true) {
                     $s = Show-ServiceMenu

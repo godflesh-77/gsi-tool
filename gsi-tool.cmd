@@ -21,7 +21,9 @@ if not errorlevel 1 (
 
 powershell -NoProfile -ExecutionPolicy Bypass -File "%PS1%" %*
 set "RC=%ERRORLEVEL%"
-echo.
-echo Exit code: %RC%
-pause
+if %RC% neq 0 (
+    echo.
+    echo Exit code: %RC%
+    pause
+)
 exit /b %RC%

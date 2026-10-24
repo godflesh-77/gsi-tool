@@ -56,6 +56,9 @@ on_int() {
         return
     fi
     log "Interrupted by user (Ctrl+C)"
+    trap - INT
+    stty sane 2>/dev/null || true
+    adb kill-server >/dev/null 2>&1 || true
     exit 130
 }
 trap on_int INT
@@ -64,23 +67,32 @@ trap on_int INT
 # ==============================================================================
 # CLI flags
 # ==============================================================================
-for arg in "$@"; do
-    case "$arg" in
+# Accepted on both platforms: -Version -Help -Serial <id>|-Serial=<id>
+# -Lang ru|-Lang=ru -StrictVersions (long/short forms).
+# Unknown options are an error, not a silent no-op.
+FORCE_LANG=""
+SERIAL=""
+STRICT_VERSIONS="no"
+while [ $# -gt 0 ]; do
+    case "$1" in
         -Version|--version|-v) echo "$TOOL_VERSION"; exit 0 ;;
         -Help|--help|-h)
             echo "GSI Flash Tool $TOOL_VERSION"
             echo "Build: $BUILD"
-            echo "Usage: $0 [--lang=en|ru] [--serial=<serial>] [--strict-versions] [--version] [--help]"
+            echo "Usage: $0 [-Version] [-Help] [-Lang ru|en] [-Serial <id>] [-StrictVersions]"
+            echo "Long forms: --version --help --lang=ru --serial=<id> --strict-versions"
             exit 0
             ;;
-        -Lang=*|--lang=*)          FORCE_LANG="${arg#*=}" ;;
-        -Serial=*|--serial=*)      SERIAL="${arg#*=}" ;;
-        -StrictVersions|--strict-versions) STRICT_VERSIONS="yes" ;;
-        *)
-            echo "Unknown option: $arg" >&2
-            echo "Run '$0 --help' for usage." >&2
-            exit 1
-            ;;
+        -Lang|--lang)
+            [ $# -ge 2 ] || { echo "Error: $1 requires a value (ru|en)" >&2; exit 1; }
+            FORCE_LANG="$2"; shift 2 ;;
+        --lang=*|-Lang=*) FORCE_LANG="${1#*=}"; shift ;;
+        -Serial|--serial)
+            [ $# -ge 2 ] || { echo "Error: $1 requires a value (device serial)" >&2; exit 1; }
+            SERIAL="$2"; shift 2 ;;
+        --serial=*|-Serial=*) SERIAL="${1#*=}"; shift ;;
+        -StrictVersions|--strict-versions) STRICT_VERSIONS="yes"; shift ;;
+        *) echo "Unknown option: $1 (try -Help)" >&2; exit 1 ;;
     esac
 done
 
@@ -468,7 +480,7 @@ check_tool_versions() {
         problems=$((problems+1))
     else
         local adb_v
-        adb_v=$(adb --version 2>/dev/null | grep -oE 'Version [0-9]+\.[0-9]+\.[0-9]+' | head -1 | awk '{print $2}')
+        adb_v=$(adb --version </dev/null 2>/dev/null | grep -oE 'Version [0-9]+\.[0-9]+\.[0-9]+' | head -1 | awk '{print $2}')
         if [ -z "$adb_v" ]; then
             echo "  adb      : $(t VersionUnknown)  ($(command -v adb))" >&2
             log_warn "adb version unknown"
@@ -489,7 +501,7 @@ check_tool_versions() {
         problems=$((problems+1))
     else
         local fb_v
-        fb_v=$(fastboot --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+        fb_v=$(fastboot --version </dev/null 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
         if [ -z "$fb_v" ]; then
             echo "  fastboot : $(t VersionUnknown)  ($(command -v fastboot))" >&2
             log_warn "fastboot version unknown"
@@ -507,7 +519,7 @@ check_tool_versions() {
     # 7-Zip: optional on Linux. If present but version unparseable — not fatal.
     if command -v 7z >/dev/null 2>&1; then
         local sz_v
-        sz_v=$(7z 2>&1 | head -1 | grep -oE '[0-9]+\.[0-9]+' | head -1)
+        sz_v=$(7z </dev/null 2>&1 | head -1 | grep -oE '[0-9]+\.[0-9]+' | head -1)
         if [ -z "$sz_v" ]; then
             echo "  7-Zip    : $(t VersionUnknown)  (optional on Linux)" >&2
             log "7-Zip present but version unparseable (optional on Linux)"
@@ -526,7 +538,7 @@ check_tool_versions() {
 
     if command -v zstd >/dev/null 2>&1; then
         local z_v
-        z_v=$(zstd --version 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 | tr -d 'v')
+        z_v=$(zstd --version </dev/null 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 | tr -d 'v')
         if [ -z "$z_v" ]; then
             echo "  zstd     : $(t VersionUnknown)  ($(command -v zstd))" >&2
             log_warn "zstd version unknown"
@@ -1485,10 +1497,17 @@ do_flash() {
     case "$mode" in
         slot)
             local sc
-            read -rp "$(t EnterSlot)" sc
-            # sanitize for slot letters only (sanitize_choice strips non-digits!)
-            sc=$(printf '%s' "$sc" | tr -d '[:space:]' | tr 'A-B' 'a-b' | cut -c1)
-            [[ ! "$sc" =~ ^[ab]$ ]] && sc="$CURRENT_SLOT"
+            while true; do
+                read -rp "$(t EnterSlot)" sc
+                # sanitize for slot letters only (sanitize_choice strips non-digits!)
+                sc=$(printf '%s' "$sc" | tr -d '[:space:]' | tr 'A-B' 'a-b' | cut -c1)
+                [ -z "$sc" ] && sc="$CURRENT_SLOT"
+                if [[ "$sc" =~ ^[ab]$ ]]; then
+                    break
+                else
+                    echo "$(t InvalidChoice)" >&2
+                fi
+            done
             log "Target slot: $sc"
             verify_image_sha || return
             prepare_vbmeta || return
@@ -1500,6 +1519,7 @@ do_flash() {
                 echo "$(t SetActiveFail)" >&2
                 echo "DO NOT reboot into the flashed slot; switch slot from the bootloader." >&2
                 pause
+                return 1
             fi
             fb reboot
             log "Flash OK (slot). Exiting."
@@ -1556,7 +1576,7 @@ while true; do
         show_main_menu
         c="$MENU_CHOICE"
         case "$c" in
-            0) log "Exit from main menu"; exit 0 ;;
+            0) log "Exit from main menu"; trap - INT; stty sane 2>/dev/null || true; adb kill-server >/dev/null 2>&1 || true; exit 0 ;;
             6)
                 while true; do
                     show_service_menu
@@ -1577,9 +1597,9 @@ while true; do
             2) wait_for_adb && { adb_ reboot fastboot; wait_for_fastboot && PROCEED=1; } ;;
             1)
                 echo "-- ADB --" >&2
-                if [ -n "$SERIAL" ]; then adb -s "$SERIAL" devices; else adb devices; fi
+                if [ -n "$SERIAL" ]; then adb -s "$SERIAL" devices </dev/null; else adb devices </dev/null; fi
                 echo "-- Fastboot --" >&2
-                if [ -n "$SERIAL" ]; then fastboot -s "$SERIAL" devices; else fastboot devices; fi
+                if [ -n "$SERIAL" ]; then fastboot -s "$SERIAL" devices </dev/null; else fastboot devices </dev/null; fi
                 ;;
             *) log "Unknown main menu choice: [$c]" ;;
         esac
