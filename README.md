@@ -120,8 +120,15 @@ Bash: `./gsi-tool.sh --serial=ABC123 --strict-versions`
 ## Known quirks
 
 - **MTK fastbootd:** `fastboot reboot fastboot` often returns a non-zero exit code even though the device really reboots (bootloader drops USB before ACK). The script uses a tolerant wrapper and relies on `wait_for_fastboot` instead of the exit code.
-- **MTK fastbootd:** `set_active` usually fails — use `bootloader` (not fastbootd) to switch slots. The script warns about this before attempting.
+- **MTK fastbootd:** `set_active` usually fails — use `bootloader` (not fastbootd) to switch slots. The script warns on failure and stops before rebooting.
 - **MTK `-w`:** `fastboot -w` sometimes complains about non-standard layout. In the Linux version the rc is ignored (continue); in the Windows version a warning is written to the log.
+
+---
+
+## Acknowledgements
+
+- **FeDeveloper95** — for the original idea and the first script ([github.com/FeDeveloper95](https://github.com/FeDeveloper95))
+- Reviewers who caught real bugs in `taskkill`, `ReadAllBytes`, `errorlevel`, and `cmd.exe` encoding issues (mojibake)
 
 ---
 

@@ -120,8 +120,15 @@ Bash: `./gsi-tool.sh --serial=ABC123 --strict-versions`
 ## Известные особенности
 
 - **MTK fastbootd:** `fastboot reboot fastboot` часто возвращает ненулевой exit code, хотя устройство реально перезагружается (загрузчик рвёт USB до ACK). Скрипт использует tolerant-обёртку и полагается на `wait_for_fastboot`, а не на exit code.
-- **MTK fastbootd:** `set_active` обычно не работает — используйте `bootloader` (не fastbootd) для переключения слота. Скрипт предупреждает об этом перед попыткой.
+- **MTK fastbootd:** `set_active` обычно не работает — используйте `bootloader` (не fastbootd) для переключения слота. Скрипт предупреждает при неудаче и останавливается.
 - **MTK `-w`:** `fastboot -w` иногда ругается на нестандартный layout. В Linux-версии rc игнорируется (продолжаем), в Windows-версии — предупреждение в лог.
+
+---
+
+## Благодарности
+
+- **FeDeveloper95** — за оригинальную идею и первый скрипт ([github.com/FeDeveloper95](https://github.com/FeDeveloper95))
+- Ревьюерам, которые ловили реальные баги в `taskkill`, `ReadAllBytes`, `errorlevel` и кракозябрах `cmd.exe`
 
 ---
 
