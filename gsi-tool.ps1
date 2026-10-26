@@ -40,7 +40,7 @@ if ($Admin -and -not ([Security.Principal.WindowsPrincipal][Security.Principal.W
 }
 # ---------------------------------------------------------------------------
 
-$Script:TOOL_VERSION = '1.1.2'
+$Script:TOOL_VERSION = '1.1.3'
 
 $buildHash = $null
 if (Get-Command git -ErrorAction SilentlyContinue) {
@@ -191,6 +191,17 @@ $MSG = @{
         BackupNo7Zip    = 'Backup requires 7-Zip. Install 7-Zip 22.00+ and retry.'
 
         PartBackupMenu    = 'Backup critical partitions (nvram/persist/modemst)'
+        SideloadMenu    = 'Flash recovery ZIP (.zip) via ADB Sideload'
+        SideloadTitle   = 'ADB SIDELOAD'
+        SideloadNoZip   = 'No .zip files found.'
+        SideloadSelect  = 'Select recovery ZIP:'
+        SideloadReady   = 'Press Enter to start sideload, or type ''reboot'' to reboot to sideload mode:'
+        SideloadReboot  = 'Rebooting to sideload mode...'
+        SideloadManual  = 'Ensure recovery is in ADB Sideload mode.'
+        Sideloading     = 'Sideloading {0}...'
+        SideloadDone    = 'Sideload OK: {0}'
+        SideloadFailed  = 'Sideload FAILED: {0}'
+        SideloadAnother = 'Flash another ZIP? (y/N): '
         PartBackupTitle   = 'BACKUP CRITICAL PARTITIONS'
         PartBackupInfo    = 'Reads nvram, persist, modemst1/2, fsg, fsc, misc, bluetooth, oem via dd + gzip.'
         PartBackupRootWarn= 'Root is required (adb shell id must return uid=0). Use recovery with adb root.'
@@ -318,6 +329,17 @@ $MSG = @{
         BackupNo7Zip    = 'Для бэкапа нужен 7-Zip. Установите 7-Zip 22.00+ и повторите.'
 
         PartBackupMenu    = 'Бэкап критических разделов (nvram/persist/modemst)'
+        SideloadMenu    = 'Прошивка recovery-архива (.zip) через ADB Sideload'
+        SideloadTitle   = 'ADB SIDELOAD'
+        SideloadNoZip   = 'Файлы .zip не найдены.'
+        SideloadSelect  = 'Выберите recovery-архив:'
+        SideloadReady   = 'Нажмите Enter для начала прошивки, или введите ''reboot'' для перезагрузки в режим sideload:'
+        SideloadReboot  = 'Перезагрузка в режим sideload...'
+        SideloadManual  = 'Убедитесь, что рекавери в режиме ADB Sideload.'
+        Sideloading     = 'Прошивка {0}...'
+        SideloadDone    = 'Sideload OK: {0}'
+        SideloadFailed  = 'Sideload FAILED: {0}'
+        SideloadAnother = 'Прошить ещё один ZIP? (y/N): '
         PartBackupTitle   = 'БЭКАП КРИТИЧЕСКИХ РАЗДЕЛОВ'
         PartBackupInfo    = 'Читает nvram, persist, modemst1/2, fsg, fsc, misc, bluetooth, oem через dd + gzip.'
         PartBackupRootWarn= 'Нужен root (adb shell id должен вернуть uid=0). Используйте recovery с adb root.'
@@ -1424,6 +1446,105 @@ function Backup-CriticalPartitions {
     Pause
 }
 
+function Sideload-RecoveryZip {
+    Clear-Host
+    Log "=== Sideload-RecoveryZip ==="
+    Say (T 'SideloadTitle') 'Cyan'
+
+    $zips = @(Get-ChildItem -LiteralPath $PSScriptRoot -Filter '*.zip' -File -ErrorAction SilentlyContinue)
+    if ($zips.Count -eq 0) {
+        LogWarn "No .zip files found"
+        Say (T 'SideloadNoZip') 'Red'
+        Pause; return
+    }
+
+    while ($true) {
+        Say (T 'SideloadSelect') 'Cyan'
+        for ($i = 0; $i -lt $zips.Count; $i++) {
+            Write-Host ("   {0}) {1}" -f ($i+1), $zips[$i].Name)
+        }
+        $zipFile = $null
+        while ($true) {
+            $r = Read-Host -Prompt (T 'Input')
+            if ($r -eq '0') { return }
+            $n = 0
+            if ([int]::TryParse($r, [ref]$n) -and $n -ge 1 -and $n -le $zips.Count) {
+                $zipFile = $zips[$n-1].FullName
+                break
+            }
+            Say (T 'InvalidChoice') 'Yellow'
+        }
+
+        Log "Selected ZIP: $zipFile"
+        Say (T 'SideloadReady') 'Yellow'
+        $ans = Read-Host
+        if ($ans -match '^(?i)reboot') {
+            Log "Rebooting to sideload mode"
+            Say (T 'SideloadReboot') 'Cyan'
+            [void](Invoke-Adb 'reboot' 'sideload')
+            Start-Sleep -Seconds 5
+        } else {
+            Say (T 'SideloadManual') 'Yellow'
+        }
+
+        $cmdArgs = @()
+        if ($Script:Serial) { $cmdArgs += @('-s', $Script:Serial) }
+        $cmdArgs += @('sideload', $zipFile)
+
+        Log "adb sideload $zipFile"
+        Say ((T 'Sideloading') -f (Split-Path $zipFile -Leaf)) 'Cyan'
+
+        $proc = New-Object System.Diagnostics.Process
+        $proc.StartInfo.FileName               = $Script:ADB_PATH
+        $proc.StartInfo.Arguments              = Format-Args $cmdArgs
+        $proc.StartInfo.RedirectStandardOutput = $true
+        $proc.StartInfo.RedirectStandardError  = $true
+        $proc.StartInfo.UseShellExecute        = $false
+        $proc.StartInfo.CreateNoWindow         = $true
+
+        try {
+            [void]$proc.Start()
+            $outTask = $proc.StandardOutput.ReadToEndAsync()
+
+            $buffer = New-Object byte[] 1024
+            $stream = $proc.StandardError.BaseStream
+            $errText = ""
+            while ($true) {
+                $read = $stream.Read($buffer, 0, $buffer.Length)
+                if ($read -le 0) { break }
+                $str = [System.Text.Encoding]::UTF8.GetString($buffer, 0, $read)
+                Write-Host -NoNewline $str
+                $errText += $str
+            }
+
+            $proc.WaitForExit()
+            $out = $outTask.Result
+            if ($out) { Write-Host $out }
+
+            $exitCode = $proc.ExitCode
+            try { $proc.Dispose() } catch { }
+
+            if ($exitCode -eq 0 -and $errText -match 'Total xfer: 1\.00x') {
+                Log "Sideload OK: $zipFile"
+                Say ((T 'SideloadDone') -f (Split-Path $zipFile -Leaf)) 'Green'
+            } else {
+                LogErr "Sideload failed: $zipFile (rc=$exitCode)"
+                Say ((T 'SideloadFailed') -f (Split-Path $zipFile -Leaf)) 'Red'
+            }
+        } catch {
+            LogErr "Sideload exception: $_"
+            Say ((T 'SideloadFailed') -f (Split-Path $zipFile -Leaf)) 'Red'
+            if (-not $proc.HasExited) { try { $proc.Kill() } catch { } }
+            try { $proc.Dispose() } catch { }
+        }
+
+        if (-not (Confirm (T 'SideloadAnother'))) {
+            break
+        }
+    }
+    Pause
+}
+
 function Install-GkiKernels {
     Clear-Host
     Log "=== Install-GkiKernels ==="
@@ -1516,6 +1637,7 @@ function Show-ServiceMenu {
     Say "  2. $(T 'FlashingGki')"
     Say "  3. $(T 'EmergencyFix')"
     Say "  4. $(T 'PartBackupMenu')"
+    Say "  5. $(T 'SideloadMenu')"
     Say "  0. $(T 'Back')"
     $choice = Read-Host -Prompt (T 'Input')
     Log "Service menu: choice=$choice"
@@ -1631,6 +1753,7 @@ while ($true) {
                         '2' { Install-GkiKernels }
                         '3' { Restore-EmergencySlots }
                         '4' { Backup-CriticalPartitions }
+                        '5' { Sideload-RecoveryZip }
                         default { Log "Unknown service choice: $s" }
                     }
                 }

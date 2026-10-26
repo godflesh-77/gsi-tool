@@ -8,7 +8,7 @@ rem  Mirror:     https://github.com/godflesh-77/gsi-tool (read-only)
 rem  License:    MIT
 rem ============================================================================
 chcp 65001 >nul
-title GSI Flash Tool 1.1.2
+title GSI Flash Tool 1.1.3
 
 set "PS1=%~dp0gsi-tool.ps1"
 

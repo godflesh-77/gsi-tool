@@ -8,7 +8,7 @@
 # License:    MIT
 # ==============================================================================
 
-TOOL_VERSION="1.1.2"
+TOOL_VERSION="1.1.3"
 
 # Determine script directory independent of CWD (matches PS $PSScriptRoot)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
@@ -237,6 +237,16 @@ MSG_EN[PartBackupProgress]="Reading %s"
 MSG_EN[PartBackupDone]="Backup OK: %s partition(s) -> %s"
 MSG_EN[PartBackupFailed]="Backup FAILED: %s"
 
+MSG_EN[SideloadMenu]="Flash recovery ZIP (.zip) via ADB Sideload"
+MSG_EN[SideloadTitle]="ADB SIDELOAD"
+MSG_EN[SideloadSelect]="Select recovery ZIP:"
+MSG_EN[SideloadReady]="Press Enter to start sideload, or type 'reboot' to reboot to sideload mode:"
+MSG_EN[SideloadReboot]="Rebooting to sideload mode..."
+MSG_EN[SideloadManual]="Ensure recovery is in ADB Sideload mode."
+MSG_EN[Sideloading]="Sideloading %s..."
+MSG_EN[SideloadDone]="Sideload OK: %s"
+MSG_EN[SideloadFailed]="Sideload FAILED: %s"
+MSG_EN[SideloadAnother]="Flash another ZIP? (y/N): "
 MSG_EN[ExitCodeMsg]="Exit code: %s"
 
 MSG_RU[MainMenuTitle]="GSI Flash Tool"
@@ -362,6 +372,16 @@ MSG_RU[PartBackupProgress]="Чтение %s"
 MSG_RU[PartBackupDone]="Бэкап готов: %s разделов -> %s"
 MSG_RU[PartBackupFailed]="Бэкап НЕ УДАЛСЯ: %s"
 
+MSG_RU[SideloadMenu]="Прошивка recovery-архива (.zip) через ADB Sideload"
+MSG_RU[SideloadTitle]="ADB SIDELOAD"
+MSG_RU[SideloadSelect]="Выберите recovery-архив:"
+MSG_RU[SideloadReady]="Нажмите Enter для начала прошивки, или введите 'reboot' для перезагрузки в режим sideload:"
+MSG_RU[SideloadReboot]="Перезагрузка в режим sideload..."
+MSG_RU[SideloadManual]="Убедитесь, что рекавери в режиме ADB Sideload."
+MSG_RU[Sideloading]="Прошивка %s..."
+MSG_RU[SideloadDone]="Sideload OK: %s"
+MSG_RU[SideloadFailed]="Sideload FAILED: %s"
+MSG_RU[SideloadAnother]="Прошить ещё один ZIP? (y/N): "
 MSG_RU[ExitCodeMsg]="Код выхода: %s"
 
 if [ -n "$FORCE_LANG" ]; then
@@ -1370,6 +1390,61 @@ backup_critical_partitions() {
     pause
 }
 
+# ==============================================================================
+# Sideload recovery ZIP (.zip) via adb
+# ==============================================================================
+sideload_recovery_zip() {
+    clear
+    log "=== Sideload-Recovery-ZIP ==="
+    echo "$(t SideloadTitle)" >&2
+
+    while true; do
+        if ! interactive_file_select "*.zip" "$(t SideloadSelect)"; then
+            return 1
+        fi
+        local zip_file="$SELECTED_FILE"
+        log "Selected ZIP: $zip_file"
+
+        echo "$(t SideloadReady)" >&2
+        local ans
+        read -rp "> " ans
+        if [[ "$ans" =~ ^[Rr]eboot ]]; then
+            log "Rebooting to sideload mode"
+            echo "$(t SideloadReboot)" >&2
+            adb_ reboot sideload || true
+            sleep 5 # время на перезагрузку и поднятие демона
+        else
+            echo "$(t SideloadManual)" >&2
+        fi
+
+        local sarr=()
+        [ -n "$SERIAL" ] && sarr+=("-s" "$SERIAL")
+        sarr+=("sideload" "$zip_file")
+
+        log "adb sideload $zip_file"
+        tf Sideloading "$(basename "$zip_file")" >&2
+
+        local tmp_log
+        tmp_log=$(mktemp)
+        adb "${sarr[@]}" 2>&1 | tee "$tmp_log"
+        local rc=${PIPESTATUS[0]}
+
+        if [ $rc -eq 0 ] && grep -q "Total xfer: 1.00x" "$tmp_log"; then
+            log "Sideload OK: $zip_file"
+            tf SideloadDone "$(basename "$zip_file")" >&2
+        else
+            log_err "Sideload failed: $zip_file (rc=$rc)"
+            tf SideloadFailed "$(basename "$zip_file")" >&2
+        fi
+        rm -f "$tmp_log"
+
+        if ! confirm "$(t SideloadAnother)"; then
+            break
+        fi
+    done
+    pause
+}
+
 flash_gki_cores() {
     clear
     log "=== Install-GkiKernels ==="
@@ -1475,6 +1550,7 @@ show_service_menu() {
     echo "  2. $(t FlashingGki)" >&2
     echo "  3. $(t EmergencyFix)" >&2
     echo "  4. $(t PartBackupMenu)" >&2
+    echo "  5. $(t SideloadMenu)" >&2
     echo "  0. $(t Back)" >&2
     local raw
     read -rp "$(t Input)" raw
@@ -1586,6 +1662,7 @@ while true; do
                         1) backup_data_stream ;;
                         2) flash_gki_cores ;;
                         3) emergency_slot_fix ;;
+                        5) sideload_recovery_zip ;;
                         4) backup_critical_partitions ;;
                         *) log "Unknown service choice: [$s]" ;;
                     esac

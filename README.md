@@ -11,6 +11,16 @@ Cross-platform utility for flashing Generic System Images (GSI), managing slots,
 
 ---
 
+> ### ⚠️ Disclaimer
+> **Use this tool at your own risk.** Unlocking the bootloader, flashing custom firmware, and modifying dynamic partitions (like `super`) will **void your manufacturer warranty** and can potentially brick your device or cause permanent data loss.
+> - **Data loss:** Your data *will* be wiped if you unlock the bootloader or perform a full wipe.
+> - **Recovery:** Ensure you have a way to recover your device (e.g., SP Flash Tool for MTK, or a stock fastboot ROM) before proceeding.
+> - **Responsibility:** The developers of `gsi-tool` are not responsible for any damage, bricking, or voided warranties.
+> *If you are not confident in what you are doing, do not proceed.*
+
+---
+
+
 ## Features
 
 - **GSI flashing** into the active or a specific slot (`system_a` / `system_b`)
@@ -28,6 +38,7 @@ Cross-platform utility for flashing Generic System Images (GSI), managing slots,
 - **Critical partitions backup** — reads `nvram`, `persist`, `modemst1/2`, `fsg`, `fsc`, `misc`, `bluetooth`, `oem` via `adb exec-out dd` + gzip (requires root)
 - **GKI kernel flashing** (`boot` + `vendor_boot`) into the active slot
 - **Emergency restore** — dual-write kernels into both slots + `set_active a`
+- **Recovery ZIP sideload** — flashes `.zip` recovery packages (e.g., preparation scripts, Magisk) via `adb sideload`
 - **Full logging** of every operation into `logs/`
 - **Ctrl+C protection** in critical sections (Linux)
 - **Multilingual UI** EN/RU with auto-detect and `-Lang` / `--lang=` flags
@@ -120,7 +131,7 @@ Bash: `./gsi-tool.sh --serial=ABC123 --strict-versions`
 ## Known quirks
 
 - **MTK fastbootd:** `fastboot reboot fastboot` often returns a non-zero exit code even though the device really reboots (bootloader drops USB before ACK). The script uses a tolerant wrapper and relies on `wait_for_fastboot` instead of the exit code.
-- **MTK fastbootd:** `set_active` usually fails — use `bootloader` (not fastbootd) to switch slots. The script warns on failure and stops before rebooting.
+- **MTK fastbootd:** `set_active` usually fails — use `bootloader` (not fastbootd) to switch slots. The script warns about this before attempting.
 - **MTK `-w`:** `fastboot -w` sometimes complains about non-standard layout. In the Linux version the rc is ignored (continue); in the Windows version a warning is written to the log.
 
 ---

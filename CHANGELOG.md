@@ -8,6 +8,15 @@ Versioning: [SemVer](https://semver.org/).
 
 _(nothing yet)_
 
+## [1.1.3] — 2026-10-26
+
+- **Minor hotfix.** Added a recovery ZIP sideload helper. No changes to the main flashing logic.
+
+### Added
+- **Recovery ZIP sideload helper.** Both `.sh` and `.ps1` have a new service-menu option (`5`) to flash `.zip` files via `adb sideload` — for preparation scripts (e.g. `ABPREPA75.zip`), stock recovery packages, or Magisk, which cannot be flashed via `fastboot`. Supports flashing several ZIPs in a row and validates success via the `Total xfer: 1.00x` output. `adb reboot sideload` is used to enter sideload mode directly; in manual recovery mode the script asks to ensure the device is in "Apply from ADB" mode.
+- **Explicit disclaimer in README.** Warning about warranty voiding, brick risk, and data loss at the top of the document.
+
+
 ## [1.1.2] — 2026-10-24
 
 - **Hotfix.** CLI flag parity between platforms. No flashing-logic changes.
