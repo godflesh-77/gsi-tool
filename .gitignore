@@ -21,8 +21,9 @@ backups/
 *.tar.lz4
 *.7z
 
-# --- Local dev tools ---
+# local dev tools
 arc.sh
+arc.cmd
 *.patch
 
 # --- Local tool binaries (обычно из platform-tools / 7-Zip) ---
