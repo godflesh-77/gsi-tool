@@ -126,6 +126,12 @@ Bash: `./gsi-tool.sh --serial=ABC123 --strict-versions`
 - On suspiciously small image (<100 MB), a warning + confirm is shown.
 - During `/data` backup, a warning is printed: IMEI, Wi-Fi/Bluetooth MAC, and Widevine keys are **not** included — they live in `/persist`, `/nvram`, `/modemst*`, `/misc`.
 
+> ⚠️ **CRITICAL: /data backups are for disaster recovery, NOT for ROM migration.**
+> The `/data` backup captures the entire user partition, including system framework settings, databases, and keystore.
+> - **DO NOT** restore this backup after switching to a **different custom ROM** (e.g., InfinityX → EvolutionX). It will overwrite the new ROM's incompatible system files and cause a bootloop.
+> - **USE** tools like *Migrate* or *NeoBackup* for migrating between different ROMs.
+> - **USE THIS BACKUP ONLY** for disaster recovery on the **same ROM** (e.g., rolling back a failed update, restoring after an accidental `fastboot -w`).
+
 ---
 
 ## Known quirks
