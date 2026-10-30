@@ -8,7 +8,19 @@ Versioning: [SemVer](https://semver.org/).
 
 _(nothing yet)_
 
-## [1.1.4] — 2026-10-29
+## [1.1.5] — 2026-10-30
+
+- **Hotfix.** 7-Zip version detection made robust. Cosmetic; no flashing logic changed.
+
+### Fixed
+- **7-Zip version "unparseable" on Linux.** The check ran bare `7z` and took
+  the first output line; with stdin closed (`</dev/null`) bare `7z` prints
+  nothing in non-tty, so the parse always failed (warn-only on Linux, but
+  noisy). Fix: parse the output of `7z i` (banner is always its first line)
+  and use `grep -m1`; PowerShell uses the same `i` call. Immune to leading
+  blank lines and tty quirks.
+
+## [1.1.4] — 2026-10-30
 
 - **Hotfix (Linux).** Critical-partitions backup was unusable: the root check
   always failed, even on a rooted device. No other logic changed.
