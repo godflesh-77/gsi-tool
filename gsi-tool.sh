@@ -8,7 +8,7 @@
 # License:    MIT
 # ==============================================================================
 
-TOOL_VERSION="1.1.4"
+TOOL_VERSION="1.1.5"
 
 # Determine script directory independent of CWD (matches PS $PSScriptRoot)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"

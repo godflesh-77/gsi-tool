@@ -40,7 +40,7 @@ if ($Admin -and -not ([Security.Principal.WindowsPrincipal][Security.Principal.W
 }
 # ---------------------------------------------------------------------------
 
-$Script:TOOL_VERSION = '1.1.4'
+$Script:TOOL_VERSION = '1.1.5'
 
 $buildHash = $null
 if (Get-Command git -ErrorAction SilentlyContinue) {
