@@ -8,6 +8,23 @@ Versioning: [SemVer](https://semver.org/).
 
 _(nothing yet)_
 
+## [1.1.4] — 2026-10-29
+
+- **Hotfix (Linux).** Critical-partitions backup was unusable: the root check
+  always failed, even on a rooted device. No other logic changed.
+
+### Fixed
+- **Critical (Linux): `backup_critical_partitions` root check always failed.**
+  `id_out=$(adb_ shell id 2>&1)` captured only the wrapper's own log line:
+  `adb_()` swallows command stdout (by design since 1.0.0). On a rooted device
+  the script reported "root required", with `id:` containing just the log.
+  Fix: direct `adb` call with `2>/dev/null` (and `-s $SERIAL` propagated).
+- **Important (Linux): partition existence check always reported "exists".**
+  Same capture pattern: the log line echoes the command text including the
+  literal "YES", so missing partitions were never skipped and `dd` ran against
+  them (failing, with cleanup). Fix: same direct-`adb` call; missing partitions
+  are now skipped with a warning, as intended.
+
 ## [1.1.3] — 2026-10-26
 
 - **Minor hotfix.** Added a recovery ZIP sideload helper. No changes to the main flashing logic.

@@ -8,7 +8,7 @@
 # License:    MIT
 # ==============================================================================
 
-TOOL_VERSION="1.1.3"
+TOOL_VERSION="1.1.4"
 
 # Determine script directory independent of CWD (matches PS $PSScriptRoot)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
@@ -1313,8 +1313,15 @@ backup_critical_partitions() {
     wait_for_adb || { pause; return 1; }
 
     # Root check
+    # NOTE: call adb directly, NOT via adb_() - the wrapper swallows command
+    # stdout (by design since 1.0.0) and only emits its own log line, so
+    # $(adb_ ...) would capture the log instead of the output.
     local id_out
-    id_out=$(adb_ shell id 2>&1 || true)
+    local id_args=()
+    [ -n "$SERIAL" ] && id_args+=("-s" "$SERIAL")
+    id_args+=("shell" "id")
+    id_out=$(adb "${id_args[@]}" 2>/dev/null || true)
+    log "root check: $id_out"
     if [[ "$id_out" != *"uid=0"* ]]; then
         log_err "root required (id: $id_out)"
         echo "$(t PartBackupRootWarn)" >&2
@@ -1341,8 +1348,12 @@ backup_critical_partitions() {
 
     for p in "${parts[@]}"; do
         # existence check
+        # (direct adb call - same reason as the root check above)
         local chk
-        chk=$(adb_ shell "[ -e /dev/block/by-name/$p ] && echo YES || echo NO" 2>&1 || true)
+        local chk_args=()
+        [ -n "$SERIAL" ] && chk_args+=("-s" "$SERIAL")
+        chk_args+=("shell" "[ -e /dev/block/by-name/$p ] && echo YES || echo NO")
+        chk=$(adb "${chk_args[@]}" 2>/dev/null || true)
         if [[ "$chk" != *"YES"* ]]; then
             log_warn "Partition not present: $p"
             tf PartBackupNoPart "$p" >&2
